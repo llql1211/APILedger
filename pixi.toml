@@ -1,0 +1,17 @@
+[workspace]
+authors = ["llql1211 <1390116067@qq.com>"]
+channels = ["conda-forge"]
+name = "APILedger"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = ">=3.10"
+matplotlib = ">=3.8"
+pandas = ">=2.0"
+openpyxl = ">=3.1"
+
+[pypi-dependencies]
+customtkinter = ">=5.2.0"

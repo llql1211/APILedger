@@ -9,7 +9,7 @@ data/
 input/
 
 # processed files
-completed/
+archive/
 
 # python cache
 __pycache__/

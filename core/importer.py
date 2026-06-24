@@ -16,7 +16,7 @@ from core.db import Database
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 INPUT_DIR = os.path.join(BASE_DIR, "input")
-COMPLETED_DIR = os.path.join(BASE_DIR, "completed")
+ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
 
 
 def scan_input_files() -> List[str]:
@@ -57,7 +57,7 @@ def import_file(db: Database, filepath: str) -> int:
     1. 读取
     2. 列匹配
     3. UPSERT 写入数据库
-    4. 移至 completed/
+    4. 移至 archive/
 
     返回写入的记录数。
     """
@@ -123,7 +123,7 @@ def import_file(db: Database, filepath: str) -> int:
     # UPSERT 写入
     count = db.upsert_batch(processed)
 
-    # 移至 completed/
+    # 移至 archive/
     _archive_file(filepath)
 
     return count
@@ -131,12 +131,12 @@ def import_file(db: Database, filepath: str) -> int:
 
 def _archive_file(filepath: str):
     """
-    将文件移至 completed/ 文件夹。
-    若已完成文件夹中有同名文件, 加时间戳后缀。
+    将文件移至 archive/ 文件夹。
+    若目标文件夹中有同名文件, 加时间戳后缀。
     """
-    os.makedirs(COMPLETED_DIR, exist_ok=True)
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
     filename = os.path.basename(filepath)
-    dest = os.path.join(COMPLETED_DIR, filename)
+    dest = os.path.join(ARCHIVE_DIR, filename)
 
     if os.path.exists(dest):
         base, ext = os.path.splitext(filename)

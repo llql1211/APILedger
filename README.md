@@ -57,13 +57,13 @@ APILedger/
 │       ├── table_panel.py  # 数据表格 (排序/统计)
 │       └── chart_panel.py  # 图表面板 (折线趋势/柱状对比/饼图分布)
 ├── input/                  # [运行时] 待导入的 XLSX 文件存放处
-├── completed/              # [运行时] 已导入文件的归档目录
+├── archive/                # [运行时] 已导入文件的归档目录
 ├── data/                   # [运行时] SQLite 数据库文件 (api_ledger.db)
 ├── main.py                 # 程序入口
 └── pixi.toml               # Pixi 环境配置
 ```
 
-`input/`、`completed/`、`data/` 三个目录均为运行时自动创建，不纳入版本控制。
+`input/`、`archive/`、`data/` 三个目录均为运行时自动创建，不纳入版本控制。
 
 ---
 

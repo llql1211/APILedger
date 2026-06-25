@@ -266,13 +266,11 @@ def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
 def archive_file(filepath: str) -> str:
     """
     将文件移至 archive/ 目录。
-    归档时始终添加时间戳防止重名。
+    保持原文件名不变，若目标已存在则覆盖。
     返回归档后的文件名。
     """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    base, ext = os.path.splitext(os.path.basename(filepath))
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest_name = f"{base}_{ts}{ext}"
+    dest_name = os.path.basename(filepath)
     dest = os.path.join(ARCHIVE_DIR, dest_name)
     shutil.move(filepath, dest)
     return dest_name

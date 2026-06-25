@@ -41,6 +41,7 @@ COLUMN_MAPPING: Dict[str, list[str]] = {
     "project": [
         "项目", "项目名", "project", "应用", "app", "application",
         "资源名称", "resource",
+        "api_key_name",   # DeepSeek 账单
     ],
     "model": [
         "模型", "模型名称", "model", "name", "名称",

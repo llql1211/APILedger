@@ -64,13 +64,31 @@ def read_csv(filepath: str) -> List[Dict[str, Any]]:
     return df.to_dict(orient="records")
 
 
+XLSX_MAGIC = b"PK\x03\x04"
+
+
+def _is_xlsx_file(filepath: str) -> bool:
+    """
+    通过魔数判断文件是否为 xlsx 格式。
+    避免用户将 .xlsx 重命名为 .csv 后 CSV 解析器卡死。
+    """
+    try:
+        with open(filepath, "rb") as f:
+            return f.read(4) == XLSX_MAGIC
+    except OSError:
+        return False
+
+
 def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     """
-    读取 xlsx 并解析为标准记录。
+    读取 xlsx / csv 并解析为标准记录。
     不涉及数据库写入, 纯解析。
     """
     filename = os.path.basename(filepath)
-    records = read_csv(filepath) if filepath.lower().endswith(".csv") else read_xlsx(filepath)
+    if filepath.lower().endswith(".csv") and not _is_xlsx_file(filepath):
+        records = read_csv(filepath)
+    else:
+        records = read_xlsx(filepath)
 
     if not records:
         return []
@@ -81,13 +99,13 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     now = datetime.now().isoformat(timespec="seconds")
 
     # 终端提示: 显示列名匹配情况
-    print(f"\n  [读取] {filename}")
-    print(f"     原始表头: {headers}")
-    print(f"     字段映射: {col_map}")
+    print(f"\n  [读取] {filename}", flush=True)
+    print(f"     原始表头: {headers}", flush=True)
+    print(f"     字段映射: {col_map}", flush=True)
     extra_cols = [h for h in headers if h not in col_map.values()]
     if extra_cols:
-        print(f"     未匹配列 -> extra: {extra_cols}")
-    print(f"     数据行数: {len(records)}")
+        print(f"     未匹配列 -> extra: {extra_cols}", flush=True)
+    print(f"     数据行数: {len(records)}", flush=True)
 
     parsed: List[Dict[str, Any]] = []
     for row in records:
@@ -135,8 +153,8 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     platforms_set = set(r["platform"] for r in parsed if r["platform"])
     total_tokens = sum(r["tokens"] for r in parsed)
     total_cost = sum(r["cost"] for r in parsed)
-    print(f"     完成: {len(parsed)} 条 -> 平台 {len(platforms_set)} 个, 模型 {len(models_set)} 个, 类型 {len(types_set)} 个")
-    print(f"     tokens: {total_tokens:,}, 金额: {total_cost:.2f}")
+    print(f"     完成: {len(parsed)} 条 -> 平台 {len(platforms_set)} 个, 模型 {len(models_set)} 个, 类型 {len(types_set)} 个", flush=True)
+    print(f"     tokens: {total_tokens:,}, 金额: {total_cost:.2f}", flush=True)
 
     return parsed
 

@@ -391,7 +391,14 @@ class App(ctk.CTk):
         results: list = []
         any_conflict = False
 
-        for fpath in files:
+        total = len(files)
+        for i, fpath in enumerate(files):
+            # 推送进度到状态栏
+            fname = os.path.basename(fpath)
+            self.after(0, lambda n=fname, idx=i, t=total: self.import_status.configure(
+                text=f"处理中 ({idx+1}/{t}): {n}", text_color=""
+            ))
+
             try:
                 res = process_single_file(self.db, fpath)
                 results.append((fpath, res))
@@ -419,6 +426,14 @@ class App(ctk.CTk):
             total_same += res.get("same_count", 0)
             conflicts = res.get("conflicts", [])
             total_conflicts += len(conflicts)
+
+        # 全部文件解析失败
+        if error_files and total_new == 0 and total_same == 0 and total_conflicts == 0:
+            err_str = "; ".join(error_files[:3])
+            if len(error_files) > 3:
+                err_str += f" ... 等共 {len(error_files)} 个"
+            self._finish_import(f"导入失败: {err_str}", "#c0392b", error_files)
+            return
 
         # ── 冲突处理 ────────────────────────────
         skip_all_conflict_files = False
@@ -469,14 +484,17 @@ class App(ctk.CTk):
 
         self._finish_import(msg, "#2fa572", error_files)
 
-    def _finish_import(self, msg: str, color: str, errors: list = None):
+    def _finish_import(self, msg: str, color: str, error_files: list = None):
         """导入结束, 恢复按钮状态并刷新"""
         self.import_btn.configure(state="normal", text="📥 导入账单")
-        self.import_status.configure(text=msg, text_color=color)
 
-        if errors:
-            err_str = "; ".join(errors)
+        if error_files:
+            err_str = "; ".join(error_files[:3])
+            if len(error_files) > 3:
+                err_str += f" ... 等共 {len(error_files)} 个"
             self.import_status.configure(text=f"{msg} | 失败: {err_str}", text_color="#c0392b")
+        else:
+            self.import_status.configure(text=msg, text_color=color)
 
         self._refresh_all()
 

@@ -23,6 +23,7 @@ DISPLAY_COLUMNS = [
     ("tokens",        "Tokens"),
     ("call_volume",   "调用量"),
     ("cost",          "金额"),
+    ("unit_price",    "单价/M"),
     ("source_file",   "来源文件"),
 ]
 
@@ -37,9 +38,10 @@ COL_WIDTHS = {
     "project":     120,
     "model":       180,
     "type":        100,
-    "tokens":      100,
-    "call_volume": 100,
-    "cost":        100,
+    "tokens":       90,
+    "call_volume":  90,
+    "cost":         90,
+    "unit_price":   90,
     "source_file": 150,
 }
 
@@ -122,6 +124,9 @@ class TablePanel(ctk.CTkFrame):
                     total_cost += float(row.get("cost", 0) or 0)
                 elif key in ("tokens", "call_volume"):
                     v = f"{int(v or 0):,}"
+                elif key == "unit_price":
+                    up = float(v or 0)
+                    v = f"{up:.2f}" if up > 0 else ""
                 values.append(v)
             self.tree.insert("", "end", values=values)
 
@@ -148,7 +153,7 @@ class TablePanel(ctk.CTkFrame):
                     return int(v or 0)
                 except ValueError:
                     return 0
-            elif col_key == "cost":
+            elif col_key in ("cost", "unit_price"):
                 try:
                     return float(v or 0)
                 except ValueError:
@@ -166,5 +171,8 @@ class TablePanel(ctk.CTkFrame):
                     v = f"{float(v or 0):.4f}"
                 elif key in ("tokens", "call_volume"):
                     v = f"{int(v or 0):,}"
+                elif key == "unit_price":
+                    up = float(v or 0)
+                    v = f"{up:.2f}" if up > 0 else ""
                 values.append(v)
             self.tree.insert("", "end", values=values)

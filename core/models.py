@@ -19,6 +19,7 @@ STANDARD_FIELDS = [
     "tokens",
     "call_volume",
     "cost",
+    "unit_price",
 ]
 
 # ── 列名映射表 (关键词 → 标准字段) ────────────────
@@ -26,42 +27,54 @@ STANDARD_FIELDS = [
 # value: 需要匹配的关键词列表 (不区分大小写, 子串匹配)
 COLUMN_MAPPING: Dict[str, list[str]] = {
     "bill_start": [
-        "账单开始时间", "开始时间", "start_time", "start",
-        "调用时间", "时间", "日期", "date", "账单日期",
-        "utc_date",      # DeepSeek 账单
-        "账单结束时间",   # 兼容只填 bill_start 却写在此列的情况
+        "账单开始时间", "开始时间, ""start_time", "start",
+        "调用时间", "call_time",
+        "时间", "time",
+        "账单日期", "日期", "date",
+        "utc_date",
     ],
     "bill_end": [
-        "账单截止时间", "截止时间", "结束时间", "end_time", "end",
-        "账单结束时间",
+        "账单截止时间", "截止时间", "end_time", "end",
+        "账单结束时间", "结束时间",
     ],
     "platform": [
-        "平台", "platform", "provider", "供应商",
+        "平台", "platform",
+        "供应商", "provider",
     ],
     "project": [
-        "项目", "项目名", "project", "应用", "app", "application",
+        "项目名", "项目", "project",
+        "应用", "app", "application",
         "资源名称", "resource",
-        "api_key_name",   # DeepSeek 账单
+        "api_key_name",
     ],
     "model": [
-        "模型", "模型名称", "model", "name", "名称",
-        "API", "api", "接口", "service",
+        "模型", "模型名称", "model", "model name",
+        "名称", "name",
+        "接口", "api", "API",
+        "服务", "service",
     ],
     "type": [
-        "类型", "type", "category", "类别", "计费类型",
+        "类型", "计费类型", "type",
+        "类别", "category",
     ],
     "tokens": [
-        "tokens", "token", "令牌",
-        "amount",        # DeepSeek 账单的 amount（随后会被 request_count 分流覆盖）
+        "令牌", "tokens", "token",
+        "总数", "总量", "amount",
     ],
     "call_volume": [
-        "调用量", "调用次数", "调用", "calls", "count",
-        "requests", "请求次数", "request_count",
+        "调用量", "调用次数", "calls",
+        "次数", "count",
+        "请求次数", "requests", "request_count",
     ],
     "cost": [
-        "金额", "费用", "cost", "价格",
-        "消费", "spend", "total_cost", "总费用",
-        "计费金额", "费用(元)",
+        "金额", "费用", "消费", "cost", "spend",
+        "price",
+        "总费用", "total_cost",
+        "计费金额",
+        "费用(元)",
+    ],
+    "unit_price": [
+        "单价", "unit_price",
     ],
 }
 

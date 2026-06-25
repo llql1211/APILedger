@@ -12,23 +12,24 @@ API 账单数据管理与可视化工具。
 
 | 标准字段 | 类型 | 说明 | 可匹配的列名关键词 |
 | :---: | :---: | :---: | ----- |
-| `bill_start` | TEXT | 账单开始时间 | 账单开始时间、开始时间、start_time、start、调用时间、时间、日期、date、账单日期 |
-| `bill_end` | TEXT | 账单截止时间 | 账单截止时间、截止时间、结束时间、end_time、end |
-| `platform` | TEXT | 平台名称 | 平台、platform、provider、供应商 |
-| `project` | TEXT | 项目名 | 项目、项目名、project、应用、app、application |
-| `model` | TEXT | 模型名称 | 模型、模型名称、model、name、名称、API、api、接口、service |
-| `type` | TEXT | 计费类型 | 类型、type、category、类别、计费类型 |
-| `tokens` | INTEGER | Tokens 数量 | tokens、token、令牌 |
-| `call_volume` | INTEGER | 调用量 | 调用量、调用次数、调用、calls、count、requests、请求次数 |
-| `cost` | REAL | 金额 | 金额、费用、cost、price、价格、消费、spend、amount、total_cost、总费用、计费金额 |
+| `bill_start` | TEXT | 账单开始时间 | 账单开始时间、start_time、调用时间、call_time、时间、time、账单日期、日期、date、utc_date |
+| `bill_end` | TEXT | 账单截止时间 | 账单截止时间、截止时间、end_time、end、账单结束时间、结束时间 |
+| `platform` | TEXT | 平台名称 | 平台、platform、供应商、provider |
+| `project` | TEXT | 项目名 | 项目名、项目、project、应用、app、application、资源名称、resource、api_key_name |
+| `model` | TEXT | 模型名称 | 模型、模型名称、model、model name、名称、name、接口、api、API、服务、service |
+| `type` | TEXT | 计费类型 | 类型、计费类型、type、类别、category |
+| `tokens` | INTEGER | Tokens 数量 | 令牌、tokens、token、总数、总量、amount |
+| `call_volume` | INTEGER | 调用量 | 调用量、调用次数、calls、次数、count、请求次数、requests、request_count |
+| `cost` | REAL | 金额 | 金额、费用、消费、cost、spend、price、总费用、total_cost、计费金额、费用(元) |
+| `unit_price` | REAL | 单价/百万tokens | 单价、unit_price |
 
 **匹配示例**：
 
 | 表头 | 映射结果 | 说明 |
 | ----- | ----- | :---: |
 | `["日期", "API", "消费", "项目"]` | `bill_start`, `model`, `cost`, `project` | 最简场景 |
-| `["账单开始时间", "账单截止时间", "平台", "项目名", "模型名称", "类型", "tokens", "调用量", "金额", "备注"]` | 全部标准字段逐一匹配 | 完整场景 |
-| `["Date", "Model", "Tokens", "Cost", "Platform", "Notes"]` | 同上，英文列名 | 同样识别 |
+| `["账单开始时间", "账单截止时间", "平台", "项目名", "模型", "类型", "令牌", "调用量", "金额"]` | 全部标准字段逐一匹配 | 完整场景 |
+| `["Date", "Model Name", "Cost", "Platform"]` | `bill_start`, `model`, `cost`, `platform` | 英文列名 |
 
 ### 未匹配的列
 
@@ -85,6 +86,7 @@ APILedger/
 | `tokens` | INTEGER | Tokens 数量 |
 | `call_volume` | INTEGER | 调用量 |
 | `cost` | REAL | 金额 |
+| `unit_price` | REAL | 单价 (元/百万tokens) |
 | `extra` | TEXT | 未匹配列的原始数据 (JSON) |
 | `source_file` | TEXT | 来源文件名 |
 | `imported_at` | TEXT | 导入时间戳 |

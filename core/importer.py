@@ -115,7 +115,12 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
             original_col = col_map.get(field)
             if original_col:
                 val = row.get(original_col, "")
-                if field in ("tokens", "call_volume"):
+                if field == "unit_price":
+                    try:
+                        val = float(str(val).replace(",", ""))
+                    except (ValueError, TypeError):
+                        val = 0.0
+                elif field in ("tokens", "call_volume"):
                     try:
                         val = int(float(str(val).replace(",", "")))
                     except (ValueError, TypeError):
@@ -132,6 +137,8 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
                 elif field == "call_volume":
                     val = 0
                 elif field == "cost":
+                    val = 0.0
+                elif field == "unit_price":
                     val = 0.0
 
             entry[field] = val
@@ -174,14 +181,17 @@ TYPE_TRANSLATIONS = {
 
 def post_process_records(records: List[Dict[str, Any]]):
     """
-    解析后的后处理:
-    - type 值的翻译 (英文 → 中文)
-    - request_count 行的 amount → call_volume
-    - 模型名称归一化 (查 model_mapping 配置)
-    - 根据配置的单价表推算类型 (如两个"输入"行)
+    解析后的后处理 (按顺序):
+    1. type 翻译 (英文 → 中文)
+    2. request_count 分流: tokens → call_volume
+    3. 模型名称归一化
+    4. 计算 unit_price (若已有则跳过)
+    5. 忽略 unit_price ≈ 0 的记录
+    6. 根据 unit_price 匹配配置价格 → 设置 type
     """
     from core.config import normalize_model_name, get_pricing
 
+    # ── 第一遍: 基础处理 ──
     for entry in records:
         typ = entry.get("type", "")
         tl = TYPE_TRANSLATIONS.get(typ)
@@ -196,46 +206,47 @@ def post_process_records(records: List[Dict[str, Any]]):
         # 模型名称归一化
         platform = entry.get("platform", "")
         raw_model = entry.get("model", "")
-
         if platform and raw_model:
             entry["model"] = normalize_model_name(platform, raw_model)
 
-    # ── 第二遍: 根据单价表辅助识别类型 ──
+        # 计算 unit_price (单价/百万tokens)
+        if entry.get("unit_price", 0.0) == 0.0:
+            tokens = entry.get("tokens", 0)
+            cost = entry.get("cost", 0.0)
+            if tokens > 0 and cost > 0:
+                entry["unit_price"] = round(cost * 1_000_000 / tokens, 4)
+
+    # ── 过滤: 忽略 unit_price ≈ 0 的记录 ──
+    before = len(records)
+    records[:] = [r for r in records if r.get("unit_price", 0.0) > 1e-9]
+    filtered = before - len(records)
+    if filtered:
+        print(f"     过滤: {filtered} 条（单价为0）", flush=True)
+
+    # ── 第二遍: 根据 unit_price 匹配类型 ──
     pricing = get_pricing()
     _apply_price_hint(records, pricing)
 
 
 def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
     """
-    根据配置的单价表, 为输入的记录区分类型。
+    根据配置的单价表, 用计算出的 unit_price 匹配并设置 type。
 
-    逻辑:
-    1. 对每条 type 含"input"/"输出"但还未明确区分的记录
-    2. 查出对应平台 x 模型的 input_hit / input_miss / output 单价
-    3. 计算 unit_cost (cost/tokens × 1000), 与各单价比较
-    4. 最接近的匹配结果直接覆写 type 字段:
-       - input_hit  → "输入(缓存命中)"
-       - input_miss → "输入(缓存未命中)"
-       - output     → "输出"
+    遍历每条 type 尚未明确区分 (缓存命中/未命中/输出) 的记录,
+    查对应平台 x 模型的 input_hit / input_miss / output 价格,
+    取最接近的匹配结果直接覆写 type 字段。
     """
     if not pricing:
         return
 
-    TYPE_LABELS = {
-        "input_hit": "输入(缓存命中)",
-        "input_miss": "输入(缓存未命中)",
-        "output": "输出",
-    }
-
     for entry in records:
         typ = entry.get("type", "")
-        # 只处理 type 尚未精确区分的情况
+        # 已精确区分的不再修改
         if typ in ("输入(缓存命中)", "输入(缓存未命中)", "输出", "调用量"):
             continue
 
-        tokens = entry.get("tokens", 0)
-        cost = entry.get("cost", 0.0)
-        if not tokens or not cost:
+        up = entry.get("unit_price", 0.0)
+        if up <= 0:
             continue
 
         platform = entry.get("platform", "")
@@ -247,14 +258,17 @@ def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
         if not price_cfg:
             continue
 
-        unit_cost = cost / tokens * 1000  # 每 1K tokens 单价
         best_label = None
         best_diff = float("inf")
 
-        for key, label in TYPE_LABELS.items():
+        for key, label in [
+            ("input_hit", "输入(缓存命中)"),
+            ("input_miss", "输入(缓存未命中)"),
+            ("output", "输出"),
+        ]:
             price = price_cfg.get(key)
             if price is not None:
-                diff = abs(unit_cost - price)
+                diff = abs(up - price)
                 if diff < best_diff:
                     best_diff = diff
                     best_label = label

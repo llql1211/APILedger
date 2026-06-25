@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS api_records (
     tokens          INTEGER NOT NULL DEFAULT 0,
     call_volume     INTEGER NOT NULL DEFAULT 0,
     cost            REAL NOT NULL DEFAULT 0.0,
+    unit_price      REAL NOT NULL DEFAULT 0.0,  -- 单价/百万tokens
 
     extra           TEXT NOT NULL DEFAULT '{}',   -- JSON
     source_file     TEXT NOT NULL DEFAULT '',
@@ -47,13 +48,14 @@ CREATE_INDEXES_SQL = [
 
 UPSERT_SQL = """
 INSERT INTO api_records (bill_start, bill_end, platform, project, model, type,
-                         tokens, call_volume, cost, extra, source_file, imported_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         tokens, call_volume, cost, unit_price, extra, source_file, imported_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(bill_start, bill_end, platform, project, model, type)
 DO UPDATE SET
     tokens      = excluded.tokens,
     call_volume = excluded.call_volume,
     cost        = excluded.cost,
+    unit_price  = excluded.unit_price,
     extra       = excluded.extra,
     source_file = excluded.source_file,
     imported_at = excluded.imported_at
@@ -79,6 +81,11 @@ class Database:
     def _init_tables(self):
         cur = self.conn.cursor()
         cur.execute(CREATE_TABLE_SQL)
+        # 兼容旧表: 添加 unit_price 列 (若不存在)
+        try:
+            cur.execute("ALTER TABLE api_records ADD COLUMN unit_price REAL NOT NULL DEFAULT 0.0;")
+        except Exception:
+            pass  # 列已存在
         for idx_sql in CREATE_INDEXES_SQL:
             cur.execute(idx_sql)
         self.conn.commit()
@@ -124,7 +131,7 @@ class Database:
         for row in records:
             # 按唯一键查找
             cur.execute(
-                """SELECT tokens, call_volume, cost, source_file
+                """SELECT tokens, call_volume, cost, unit_price, source_file
                    FROM api_records
                    WHERE bill_start = ? AND bill_end = ?
                      AND platform = ? AND project = ?
@@ -189,6 +196,7 @@ class Database:
                 int(r.get("tokens", 0) or 0),
                 int(r.get("call_volume", 0) or 0),
                 float(r.get("cost", 0.0) or 0.0),
+                float(r.get("unit_price", 0.0) or 0.0),
                 r.get("extra", "{}"),
                 r.get("source_file", ""),
                 r.get("imported_at", now),

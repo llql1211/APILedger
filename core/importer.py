@@ -2,11 +2,10 @@
 APILedger - XLSX / CSV 文件扫描、读取、列匹配、两阶段导入、归档
 """
 
-import json
 import os
 import shutil
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pandas as pd
 
@@ -137,23 +136,6 @@ TYPE_TRANSLATIONS = {
     "request_count": "调用量",
 }
 
-# 类型关键词映射 — 根据 type 原文判断属于输入 / 输出 / 其他
-_INPUT_KEYWORDS = ["input", "入"]
-_OUTPUT_KEYWORDS = ["output", "出"]
-
-
-def _classify_type(typ: str) -> Optional[str]:
-    """判断一条记录的 type 属于 'input' / 'output' / None"""
-    if not typ:
-        return None
-    t = typ.lower()
-    if any(kw in t for kw in _INPUT_KEYWORDS):
-        return "input"
-    if any(kw in t for kw in _OUTPUT_KEYWORDS):
-        return "output"
-    return None
-
-
 def post_process_records(records: List[Dict[str, Any]]):
     """
     解析后的后处理:
@@ -189,63 +171,60 @@ def post_process_records(records: List[Dict[str, Any]]):
 
 def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
     """
-    根据配置的单价表, 为记录添加价格标记到 extra。
-    用于辅助识别缓存命中/未命中这类同类型不同单价的行。
+    根据配置的单价表, 为输入的记录区分类型。
 
-    遍历逻辑:
-    1. 对每组 (platform, model, bill_start, bill_end) 内的记录
-    2. 若该组内有多条输入 (或输出) 行, 且配置有价格
-    3. 计算 tokens × price 与 cost 的差值, 最接近的标记为对应的价格类型
+    逻辑:
+    1. 对每条 type 含"input"/"输出"但还未明确区分的记录
+    2. 查出对应平台 x 模型的 input_hit / input_miss / output 单价
+    3. 计算 unit_cost (cost/tokens × 1000), 与各单价比较
+    4. 最接近的匹配结果直接覆写 type 字段:
+       - input_hit  → "输入(缓存命中)"
+       - input_miss → "输入(缓存未命中)"
+       - output     → "输出"
     """
     if not pricing:
         return
 
-    # 按 (平台, 模型, 开始时间, 结束时间) 分组
-    groups: Dict[tuple, List[int]] = {}
-    for idx, entry in enumerate(records):
-        key = (entry.get("platform"), entry.get("model"),
-               entry.get("bill_start"), entry.get("bill_end"))
-        groups.setdefault(key, []).append(idx)
+    TYPE_LABELS = {
+        "input_hit": "输入(缓存命中)",
+        "input_miss": "输入(缓存未命中)",
+        "output": "输出",
+    }
 
-    for key, indices in groups.items():
-        if len(indices) < 2:
-            continue  # 单条记录不需要区分
+    for entry in records:
+        typ = entry.get("type", "")
+        # 只处理 type 尚未精确区分的情况
+        if typ in ("输入(缓存命中)", "输入(缓存未命中)", "输出", "调用量"):
+            continue
 
-        platform, model = key[0], key[1]
+        tokens = entry.get("tokens", 0)
+        cost = entry.get("cost", 0.0)
+        if not tokens or not cost:
+            continue
+
+        platform = entry.get("platform", "")
+        model = entry.get("model", "")
+        if not platform or not model:
+            continue
+
         price_cfg = pricing.get(platform, {}).get(model, {})
         if not price_cfg:
             continue
 
-        for idx in indices:
-            entry = records[idx]
-            typ_class = _classify_type(entry.get("type", ""))
-            if typ_class not in ("input", "output"):
-                continue
+        unit_cost = cost / tokens * 1000  # 每 1K tokens 单价
+        best_label = None
+        best_diff = float("inf")
 
-            tokens = entry.get("tokens", 0)
-            cost = entry.get("cost", 0.0)
-            if not tokens or not cost:
-                continue
+        for key, label in TYPE_LABELS.items():
+            price = price_cfg.get(key)
+            if price is not None:
+                diff = abs(unit_cost - price)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_label = label
 
-            unit_cost = cost / tokens
-            # 尝试匹配 input / output 单价
-            expected_input = price_cfg.get("input")
-            expected_output = price_cfg.get("output")
-            best_match = None
-            best_diff = float("inf")
-
-            for label, price in [("input", expected_input), ("output", expected_output)]:
-                if price is not None:
-                    diff = abs(unit_cost * 1000 - price)  # 通常以 /1K tokens 计价
-                    if diff < best_diff:
-                        best_diff = diff
-                        best_match = label
-
-            if best_match:
-                extra = json.loads(entry.get("extra", "{}"))
-                extra["_price_hint"] = best_match
-                extra["_unit_cost_per_1k"] = round(unit_cost * 1000, 4)
-                entry["extra"] = json.dumps(extra, ensure_ascii=False)
+        if best_label:
+            entry["type"] = best_label
 
 
 def archive_file(filepath: str) -> str:

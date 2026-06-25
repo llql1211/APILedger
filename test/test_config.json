@@ -12,13 +12,13 @@
   },
   "pricing": {
     "OpenAI": {
-      "GPT-4o": { "input": 30.0, "output": 60.0 },
-      "GPT-4o-mini": { "input": 15.0, "output": 60.0 },
-      "GPT-4-Turbo": { "input": 10.0, "output": 30.0 }
+      "GPT-4o": { "input_hit": 15.0, "input_miss": 30.0, "output": 60.0 },
+      "GPT-4o-mini": { "input_hit": 7.5, "input_miss": 15.0, "output": 60.0 },
+      "GPT-4-Turbo": { "input_hit": 5.0, "input_miss": 10.0, "output": 30.0 }
     },
     "DeepSeek": {
-      "DeepSeek-V3": { "input": 2.0, "output": 2.0 },
-      "DeepSeek-R1": { "input": 4.0, "output": 4.0 }
+      "DeepSeek-V3": { "input_hit": 0.5, "input_miss": 2.0, "output": 8.0 },
+      "DeepSeek-R1": { "input_hit": 1.0, "input_miss": 4.0, "output": 16.0 }
     }
   }
 }

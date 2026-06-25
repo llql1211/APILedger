@@ -2,7 +2,7 @@
 APILedger - API账单管理工具
 
 使用流程:
-  1. 将 xlsx / csv 账单文件放入 input/ 文件夹
+  1. 将 xlsx / csv 账单文件放入 data/input/ 文件夹
   2. 运行 python main.py
   3. 在 UI 中点击 "导入账单" 按钮
 """

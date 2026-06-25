@@ -56,9 +56,11 @@ APILedger/
 │       ├── filter_panel.py # 筛选面板 (日期/平台/项目/模型/类型/搜索)
 │       ├── table_panel.py  # 数据表格 (排序/统计)
 │       └── chart_panel.py  # 图表面板 (折线趋势/柱状对比/饼图分布)
-├── input/                  # [运行时] 待导入的 XLSX / CSV 文件存放处
-├── archive/                # [运行时] 已导入文件的归档目录
-├── data/                   # [运行时] SQLite 数据库文件 (api_ledger.db)
+├── data/                   # 用户数据目录
+│   ├── input/              # 待导入的 XLSX / CSV 文件存放处
+│   ├── archive/            # 已导入文件的归档目录
+│   ├── api_ledger.db       # SQLite 数据库文件
+│   └── config.json         # 用户配置 (模型映射/单价表)
 ├── main.py                 # 程序入口
 └── pixi.toml               # Pixi 环境配置
 ```

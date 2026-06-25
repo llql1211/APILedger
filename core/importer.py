@@ -15,8 +15,8 @@ from core.db import Database
 # 目录常量
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-INPUT_DIR = os.path.join(BASE_DIR, "input")
-ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
+INPUT_DIR = os.path.join(BASE_DIR, "data", "input")
+ARCHIVE_DIR = os.path.join(BASE_DIR, "data", "archive")
 
 
 SUPPORTED_EXTENSIONS = (".xlsx", ".csv")

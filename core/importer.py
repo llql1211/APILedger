@@ -1,5 +1,5 @@
 """
-APILedger - XLSX 文件扫描、读取、列匹配、两阶段导入、归档
+APILedger - XLSX / CSV 文件扫描、读取、列匹配、两阶段导入、归档
 """
 
 import os
@@ -19,14 +19,18 @@ INPUT_DIR = os.path.join(BASE_DIR, "input")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "archive")
 
 
+SUPPORTED_EXTENSIONS = (".xlsx", ".csv")
+
+
 def scan_input_files() -> List[str]:
-    """扫描 input/ 目录, 返回所有 .xlsx 文件路径 (按修改时间排序)"""
+    """扫描 input/ 目录, 返回所有 .xlsx / .csv 文件路径 (按修改时间排序)"""
     if not os.path.isdir(INPUT_DIR):
         return []
 
     files = []
     for f in os.listdir(INPUT_DIR):
-        if f.lower().endswith(".xlsx") and not f.startswith("~$"):
+        lower = f.lower()
+        if lower.endswith(SUPPORTED_EXTENSIONS) and not f.startswith("~$"):
             full = os.path.join(INPUT_DIR, f)
             if os.path.isfile(full):
                 files.append(full)
@@ -43,13 +47,30 @@ def read_xlsx(filepath: str) -> List[Dict[str, Any]]:
     return df.to_dict(orient="records")
 
 
+def read_csv(filepath: str) -> List[Dict[str, Any]]:
+    """用 pandas 读取 csv, 自动探测编码 (utf-8 → gbk 兜底), 返回 list of dict"""
+    for enc in ["utf-8", "utf-8-sig", "gbk", "gb18030", "latin-1"]:
+        try:
+            df = pd.read_csv(filepath, dtype=str, encoding=enc)
+            df = df.fillna("")
+            df.columns = [str(c).strip() for c in df.columns]
+            return df.to_dict(orient="records")
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    # 最后兜底
+    df = pd.read_csv(filepath, dtype=str, encoding="utf-8", errors="replace")
+    df = df.fillna("")
+    df.columns = [str(c).strip() for c in df.columns]
+    return df.to_dict(orient="records")
+
+
 def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     """
     读取 xlsx 并解析为标准记录。
     不涉及数据库写入, 纯解析。
     """
     filename = os.path.basename(filepath)
-    records = read_xlsx(filepath)
+    records = read_csv(filepath) if filepath.lower().endswith(".csv") else read_xlsx(filepath)
 
     if not records:
         return []

@@ -1,11 +1,11 @@
 """
-APILedger - XLSX 文件扫描、自动读取、列匹配、UPSERT 写入、归档
+APILedger - XLSX 文件扫描、读取、列匹配、两阶段导入、归档
 """
 
 import os
 import shutil
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -31,64 +31,43 @@ def scan_input_files() -> List[str]:
             if os.path.isfile(full):
                 files.append(full)
 
-    # 按修改时间排序, 旧的先处理
     files.sort(key=lambda p: os.path.getmtime(p))
     return files
 
 
 def read_xlsx(filepath: str) -> List[Dict[str, Any]]:
-    """
-    用 pandas 读取 xlsx, 返回 list of dict。
-    自动处理表头行。
-    """
+    """用 pandas 读取 xlsx, 返回 list of dict"""
     df = pd.read_excel(filepath, dtype=str)
-    df = df.fillna("")  # 空值统一转为空字符串
-
-    # 清理列名: 去除前后空格
+    df = df.fillna("")
     df.columns = [str(c).strip() for c in df.columns]
-
-    records = df.to_dict(orient="records")
-    return records
+    return df.to_dict(orient="records")
 
 
-def import_file(db: Database, filepath: str) -> int:
+def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     """
-    导入单个 xlsx 文件:
-    1. 读取
-    2. 列匹配
-    3. UPSERT 写入数据库
-    4. 移至 archive/
-
-    返回写入的记录数。
+    读取 xlsx 并解析为标准记录。
+    不涉及数据库写入, 纯解析。
     """
     filename = os.path.basename(filepath)
     records = read_xlsx(filepath)
 
     if not records:
-        # 空文件也移走
-        _archive_file(filepath)
-        return 0
+        return []
 
-    # 获取表头
     headers = list(records[0].keys())
-
-    # 列名匹配
     col_map = match_column(headers)
     matched_fields = set(col_map.keys())
-
     now = datetime.now().isoformat(timespec="seconds")
 
-    processed: List[Dict[str, Any]] = []
+    parsed: List[Dict[str, Any]] = []
     for row in records:
         entry: Dict[str, Any] = {}
 
-        # 标准字段: 从原始行取值
         for field in STANDARD_FIELDS:
             original_col = col_map.get(field)
             if original_col:
                 val = row.get(original_col, "")
                 if field in ("tokens", "call_volume"):
-                    # 尝试转为 int
                     try:
                         val = int(float(str(val).replace(",", "")))
                     except (ValueError, TypeError):
@@ -109,68 +88,101 @@ def import_file(db: Database, filepath: str) -> int:
 
             entry[field] = val
 
-        # fallback: 只有 bill_start 没有 bill_end 时, 用 bill_start 填充
         if not entry.get("bill_end") and entry.get("bill_start"):
             entry["bill_end"] = entry["bill_start"]
 
-        # 未匹配的列入 extra
         entry["extra"] = make_extra(row, matched_fields)
         entry["source_file"] = filename
         entry["imported_at"] = now
+        parsed.append(entry)
 
-        processed.append(entry)
-
-    # UPSERT 写入
-    count = db.upsert_batch(processed)
-
-    # 移至 archive/
-    _archive_file(filepath)
-
-    return count
+    return parsed
 
 
-def _archive_file(filepath: str):
+def archive_file(filepath: str) -> str:
     """
-    将文件移至 archive/ 文件夹。
-    若目标文件夹中有同名文件, 加时间戳后缀。
+    将文件移至 archive/ 目录。
+    归档时始终添加时间戳防止重名。
+    返回归档后的文件名。
     """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
-    filename = os.path.basename(filepath)
-    dest = os.path.join(ARCHIVE_DIR, filename)
-
-    if os.path.exists(dest):
-        base, ext = os.path.splitext(filename)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = os.path.join(COMPLETED_DIR, f"{base}_{ts}{ext}")
-
+    base, ext = os.path.splitext(os.path.basename(filepath))
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest_name = f"{base}_{ts}{ext}"
+    dest = os.path.join(ARCHIVE_DIR, dest_name)
     shutil.move(filepath, dest)
+    return dest_name
 
 
-def run_import(db: Database) -> List[str]:
+def process_single_file(
+    db: Database, filepath: str
+) -> Dict[str, Any]:
     """
-    执行导入流程:
-    1. 扫描 input/ 目录
-    2. 逐个导入
-    3. 返回已导入的文件名列表
+    单文件两阶段导入:
 
-    可在 main.py 中调用, 无文件时跳过 UI 启动前显示提示。
+    第一阶段 (检测):
+      解析文件 → check_conflicts → 分出 new / same / conflicts
+
+    第二阶段 (执行):
+      由调用方决定如何处理 conflicts, 然后调用 db.upsert_batch() 写入。
+
+    返回:
+    {
+        "filename": str,
+        "new_count": int,
+        "same_count": int,
+        "conflicts": List[conflict],
+    }
     """
-    files = scan_input_files()
-    imported = []
+    filename = os.path.basename(filepath)
 
-    if not files:
-        return imported
+    # 空文件直接归档
+    records = parse_records_from_file(filepath)
+    if not records:
+        archive_file(filepath)
+        return {"filename": filename, "new_count": 0, "same_count": 0, "conflicts": []}
 
-    print(f"[Import] Found {len(files)} file(s) to process...")
+    # 检测冲突
+    result = db.check_conflicts(records)
+    conflicts: List = result.get("conflicts", [])
 
-    for fpath in files:
-        fname = os.path.basename(fpath)
-        try:
-            count = import_file(db, fpath)
-            print(f"  [OK] {fname} -> {count} records processed")
-            imported.append(fname)
-        except Exception as e:
-            print(f"  [FAIL] {fname}: {e}")
+    # 给每条冲突行附上文件名信息供 UI 展示
+    for c in conflicts:
+        c["filename"] = filename
 
-    print(f"[Done] {len(imported)} file(s) processed")
-    return imported
+    return {
+        "filename": filename,
+        "new_count": len(result["new"]),
+        "same_count": len(result["same"]),
+        "conflicts": conflicts,
+        "_new_records": result["new"],
+        "_same_records": result["same"],
+    }
+
+
+def commit_import(
+    db: Database,
+    filepath: str,
+    file_result: Dict[str, Any],
+    force_overwrite_conflicts: bool = False,
+) -> int:
+    """
+    第二阶段执行：确认导入。
+    写入 new + (若 force_overwrite_conflicts 则含 conflicts 中的行)，
+    然后归档文件。
+
+    返回实际写入行数。
+    """
+    to_write: List[Dict[str, Any]] = list(file_result.get("_new_records", []))
+
+    if force_overwrite_conflicts:
+        for c in file_result.get("conflicts", []):
+            to_write.append(c["row"])
+
+    written = 0
+    if to_write:
+        written = db.upsert_batch(to_write)
+
+    # 归档
+    archive_file(filepath)
+    return written

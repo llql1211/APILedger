@@ -92,6 +92,79 @@ class Database:
     # 写入
     # ═══════════════════════════════════════════════
 
+    def check_conflicts(
+        self, records: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        两阶段导入的检测阶段：
+        逐行检查这批记录与数据库中已有数据的冲突情况。
+
+        返回:
+        {
+            "new":  List[Dict],   # 库中没有, 可直接插入
+            "same": List[Dict],   # 数值完全一致, 可跳过
+            "conflicts": [        # 数值不一致, 需要用户确认
+                {
+                    "row":        Dict,  # 本次导入的行
+                    "existing":   Dict,  # 数据库中已有的行
+                    "old_file":   str,   # 已有行的来源文件
+                    "new_file":   str,   # 本次导入的来源文件
+                }
+            ]
+        }
+        """
+        if not records:
+            return {"new": [], "same": [], "conflicts": []}
+
+        cur = self.conn.cursor()
+        new_rows: List[Dict[str, Any]] = []
+        same_rows: List[Dict[str, Any]] = []
+        conflicts: List[Dict[str, Any]] = []
+
+        for row in records:
+            # 按唯一键查找
+            cur.execute(
+                """SELECT tokens, call_volume, cost, source_file
+                   FROM api_records
+                   WHERE bill_start = ? AND bill_end = ?
+                     AND platform = ? AND project = ?
+                     AND model = ? AND type = ?""",
+                (
+                    row.get("bill_start", ""),
+                    row.get("bill_end", ""),
+                    row.get("platform", ""),
+                    row.get("project", ""),
+                    row.get("model", ""),
+                    row.get("type", ""),
+                ),
+            )
+            existing = cur.fetchone()
+
+            if existing is None:
+                new_rows.append(row)
+                continue
+
+            old = dict(existing)
+
+            # 比较数值字段
+            same = (
+                int(row.get("tokens", 0) or 0) == old["tokens"]
+                and int(row.get("call_volume", 0) or 0) == old["call_volume"]
+                and abs(float(row.get("cost", 0.0) or 0.0) - old["cost"]) < 1e-9
+            )
+
+            if same:
+                same_rows.append(row)
+            else:
+                conflicts.append({
+                    "row": row,
+                    "existing": old,
+                    "old_file": old.get("source_file", ""),
+                    "new_file": row.get("source_file", ""),
+                })
+
+        return {"new": new_rows, "same": same_rows, "conflicts": conflicts}
+
     def upsert_batch(self, records: List[Dict[str, Any]]):
         """
         批量 UPSERT 写入记录。

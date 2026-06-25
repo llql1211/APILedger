@@ -59,7 +59,7 @@ COLUMN_MAPPING: Dict[str, list[str]] = {
         "requests", "请求次数", "request_count",
     ],
     "cost": [
-        "金额", "费用", "cost", "price", "价格",
+        "金额", "费用", "cost", "价格",
         "消费", "spend", "total_cost", "总费用",
         "计费金额", "费用(元)",
     ],

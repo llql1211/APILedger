@@ -28,15 +28,19 @@ COLUMN_MAPPING: Dict[str, list[str]] = {
     "bill_start": [
         "账单开始时间", "开始时间", "start_time", "start",
         "调用时间", "时间", "日期", "date", "账单日期",
+        "utc_date",      # DeepSeek 账单
+        "账单结束时间",   # 兼容只填 bill_start 却写在此列的情况
     ],
     "bill_end": [
         "账单截止时间", "截止时间", "结束时间", "end_time", "end",
+        "账单结束时间",
     ],
     "platform": [
         "平台", "platform", "provider", "供应商",
     ],
     "project": [
         "项目", "项目名", "project", "应用", "app", "application",
+        "资源名称", "resource",
     ],
     "model": [
         "模型", "模型名称", "model", "name", "名称",
@@ -47,15 +51,16 @@ COLUMN_MAPPING: Dict[str, list[str]] = {
     ],
     "tokens": [
         "tokens", "token", "令牌",
+        "amount",        # DeepSeek 账单的 amount（随后会被 request_count 分流覆盖）
     ],
     "call_volume": [
         "调用量", "调用次数", "调用", "calls", "count",
-        "requests", "请求次数",
+        "requests", "请求次数", "request_count",
     ],
     "cost": [
         "金额", "费用", "cost", "price", "价格",
-        "消费", "spend", "amount", "total_cost", "总费用",
-        "计费金额",
+        "消费", "spend", "total_cost", "总费用",
+        "计费金额", "费用(元)",
     ],
 }
 

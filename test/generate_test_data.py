@@ -5,6 +5,7 @@ APILedger - 测试数据生成脚本
 运行方式: python test/generate_test_data.py
 """
 
+import csv
 import os
 from openpyxl import Workbook
 
@@ -61,6 +62,16 @@ def write_xlsx(filename, headers, rows):
     path = os.path.join(TEST_DIR, filename)
     wb.save(path)
     print(f"  已生成: {filename}  ({len(rows)} 行)")
+
+
+def write_csv(filename, headers, rows, encoding="utf-8-sig"):
+    """写入 csv 文件 (默认 utf-8-sig, 兼容 Excel 直接打开)"""
+    path = os.path.join(TEST_DIR, filename)
+    with open(path, "w", newline="", encoding=encoding) as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  已生成: {filename}  ({len(rows)} 行, {encoding})")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -152,6 +163,37 @@ def generate_conflict():
 
 
 # ═══════════════════════════════════════════════════════════════
+# 6. CSV 文件 — 中文列名 (utf-8 编码)
+# ═══════════════════════════════════════════════════════════════
+
+def generate_csv_utf8():
+    headers = ["日期", "平台", "项目", "模型", "类型", "tokens", "调用量", "金额"]
+    records = [
+        {"日期": "2024-06-01", "平台": "OpenAI", "项目": "智能客服", "模型": "GPT-4o", "类型": "输入", "tokens": 120000, "调用量": 100, "金额": 3.60},
+        {"日期": "2024-06-01", "平台": "OpenAI", "项目": "智能客服", "模型": "GPT-4o", "类型": "输出", "tokens": 65000, "调用量": 100, "金额": 2.60},
+        {"日期": "2024-06-02", "平台": "Azure", "项目": "代码助手", "模型": "GPT-4-Turbo", "类型": "输入", "tokens": 180000, "调用量": 150, "金额": 1.80},
+        {"日期": "2024-06-02", "平台": "Azure", "项目": "代码助手", "模型": "GPT-4-Turbo", "类型": "输出", "tokens": 90000, "调用量": 150, "金额": 2.70},
+        {"日期": "2024-06-03", "平台": "百度文心", "项目": "文档分析", "模型": "文心一言4.0", "类型": "输入", "tokens": 250000, "调用量": 220, "金额": 5.00},
+        {"日期": "2024-06-03", "平台": "百度文心", "项目": "文档分析", "模型": "文心一言4.0", "类型": "输出", "tokens": 140000, "调用量": 220, "金额": 5.60},
+    ]
+    write_csv("test_csv_utf8.csv", headers, records, encoding="utf-8-sig")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 7. CSV 文件 — GBK 编码 (模拟国内平台导出)
+# ═══════════════════════════════════════════════════════════════
+
+def generate_csv_gbk():
+    headers = ["日期", "平台", "模型", "费用", "备注"]
+    records = [
+        {"日期": "2024-06-01", "平台": "OpenAI", "模型": "GPT-4o-mini", "费用": 0.50, "备注": "GBK测试"},
+        {"日期": "2024-06-02", "平台": "百度文心", "模型": "文心一言4.0", "费用": 2.00, "备注": "编码探测"},
+        {"日期": "2024-06-03", "平台": "Azure", "模型": "GPT-4o", "费用": 3.50, "备注": "兜底测试"},
+    ]
+    write_csv("test_csv_gbk.csv", headers, records, encoding="gbk")
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
 
@@ -162,6 +204,8 @@ def main():
     generate_hourly_billing()
     generate_extra_columns()
     generate_conflict()
+    generate_csv_utf8()
+    generate_csv_gbk()
     print(f"\n完成！所有文件已输出到: {TEST_DIR}")
 
 

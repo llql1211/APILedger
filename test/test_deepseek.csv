@@ -1,0 +1,8 @@
+﻿user_id,utc_date,model,api_key_name,api_key,type,price,amount
+u001,2024-06-01,deepseek-chat,default,sk-xxx1,input_cache_hit_tokens,0.002,5000
+u001,2024-06-01,deepseek-chat,default,sk-xxx1,input_cache_miss_tokens,0.002,3000
+u001,2024-06-01,deepseek-chat,default,sk-xxx1,output_tokens,0.002,8000
+u001,2024-06-01,deepseek-chat,default,sk-xxx1,request_count,0,120
+u002,2024-06-02,deepseek-reasoner,prod,sk-xxx2,input_cache_hit_tokens,0.004,10000
+u002,2024-06-02,deepseek-reasoner,prod,sk-xxx2,output_tokens,0.004,6000
+u002,2024-06-02,deepseek-reasoner,prod,sk-xxx2,request_count,0,50

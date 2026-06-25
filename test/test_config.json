@@ -1,0 +1,24 @@
+{
+  "model_mapping": {
+    "DeepSeek": {
+      "deepseek-chat": "DeepSeek-V3",
+      "deepseek-reasoner": "DeepSeek-R1"
+    },
+    "Azure": {
+      "gpt-4o": "GPT-4o",
+      "gpt-4o-mini": "GPT-4o-mini",
+      "gpt-4-turbo": "GPT-4-Turbo"
+    }
+  },
+  "pricing": {
+    "OpenAI": {
+      "GPT-4o": { "input": 30.0, "output": 60.0 },
+      "GPT-4o-mini": { "input": 15.0, "output": 60.0 },
+      "GPT-4-Turbo": { "input": 10.0, "output": 30.0 }
+    },
+    "DeepSeek": {
+      "DeepSeek-V3": { "input": 2.0, "output": 2.0 },
+      "DeepSeek-R1": { "input": 4.0, "output": 4.0 }
+    }
+  }
+}

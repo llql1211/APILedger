@@ -80,6 +80,15 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     matched_fields = set(col_map.keys())
     now = datetime.now().isoformat(timespec="seconds")
 
+    # 终端提示: 显示列名匹配情况
+    print(f"\n  [读取] {filename}")
+    print(f"     原始表头: {headers}")
+    print(f"     字段映射: {col_map}")
+    extra_cols = [h for h in headers if h not in col_map.values()]
+    if extra_cols:
+        print(f"     未匹配列 -> extra: {extra_cols}")
+    print(f"     数据行数: {len(records)}")
+
     parsed: List[Dict[str, Any]] = []
     for row in records:
         entry: Dict[str, Any] = {}
@@ -119,6 +128,15 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
 
     # 解析后处理: request_count 分流、type 翻译等
     post_process_records(parsed)
+
+    # 终端提示: 显示处理完成
+    models_set = set(r["model"] for r in parsed if r["model"])
+    types_set = set(r["type"] for r in parsed if r["type"])
+    platforms_set = set(r["platform"] for r in parsed if r["platform"])
+    total_tokens = sum(r["tokens"] for r in parsed)
+    total_cost = sum(r["cost"] for r in parsed)
+    print(f"     完成: {len(parsed)} 条 -> 平台 {len(platforms_set)} 个, 模型 {len(models_set)} 个, 类型 {len(types_set)} 个")
+    print(f"     tokens: {total_tokens:,}, 金额: {total_cost:.2f}")
 
     return parsed
 

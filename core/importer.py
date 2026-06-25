@@ -2,6 +2,7 @@
 APILedger - XLSX / CSV 文件扫描、读取、列匹配、两阶段导入、归档
 """
 
+import json
 import os
 import shutil
 from datetime import datetime
@@ -117,7 +118,134 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
         entry["imported_at"] = now
         parsed.append(entry)
 
+    # 解析后处理: request_count 分流、type 翻译等
+    post_process_records(parsed)
+
     return parsed
+
+
+DEEPSEEK_INPUT_TYPES = [
+    "input_cache_hit_tokens",
+    "input_cache_miss_tokens",
+]
+
+# type 值的翻译对照表 (DeepSeek -> 通用中文)
+TYPE_TRANSLATIONS = {
+    "input_cache_hit_tokens": "输入(缓存命中)",
+    "input_cache_miss_tokens": "输入(缓存未命中)",
+    "output_tokens": "输出",
+    "request_count": "调用量",
+}
+
+# 类型关键词映射 — 根据 type 原文判断属于输入 / 输出 / 其他
+_INPUT_KEYWORDS = ["input", "入"]
+_OUTPUT_KEYWORDS = ["output", "出"]
+
+
+def _classify_type(typ: str) -> Optional[str]:
+    """判断一条记录的 type 属于 'input' / 'output' / None"""
+    if not typ:
+        return None
+    t = typ.lower()
+    if any(kw in t for kw in _INPUT_KEYWORDS):
+        return "input"
+    if any(kw in t for kw in _OUTPUT_KEYWORDS):
+        return "output"
+    return None
+
+
+def post_process_records(records: List[Dict[str, Any]]):
+    """
+    解析后的后处理:
+    - type 值的翻译 (英文 → 中文)
+    - request_count 行的 amount → call_volume
+    - 模型名称归一化 (查 model_mapping 配置)
+    - 根据配置的单价表推算类型 (如两个"输入"行)
+    """
+    from core.config import normalize_model_name, get_pricing
+
+    for entry in records:
+        typ = entry.get("type", "")
+        tl = TYPE_TRANSLATIONS.get(typ)
+        if tl:
+            entry["type"] = tl
+
+        # request_count 分流: tokens → call_volume
+        if typ == "request_count":
+            entry["call_volume"] = entry["tokens"]
+            entry["tokens"] = 0
+
+        # 模型名称归一化
+        platform = entry.get("platform", "")
+        raw_model = entry.get("model", "")
+
+        if platform and raw_model:
+            entry["model"] = normalize_model_name(platform, raw_model)
+
+    # ── 第二遍: 根据单价表辅助识别类型 ──
+    pricing = get_pricing()
+    _apply_price_hint(records, pricing)
+
+
+def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
+    """
+    根据配置的单价表, 为记录添加价格标记到 extra。
+    用于辅助识别缓存命中/未命中这类同类型不同单价的行。
+
+    遍历逻辑:
+    1. 对每组 (platform, model, bill_start, bill_end) 内的记录
+    2. 若该组内有多条输入 (或输出) 行, 且配置有价格
+    3. 计算 tokens × price 与 cost 的差值, 最接近的标记为对应的价格类型
+    """
+    if not pricing:
+        return
+
+    # 按 (平台, 模型, 开始时间, 结束时间) 分组
+    groups: Dict[tuple, List[int]] = {}
+    for idx, entry in enumerate(records):
+        key = (entry.get("platform"), entry.get("model"),
+               entry.get("bill_start"), entry.get("bill_end"))
+        groups.setdefault(key, []).append(idx)
+
+    for key, indices in groups.items():
+        if len(indices) < 2:
+            continue  # 单条记录不需要区分
+
+        platform, model = key[0], key[1]
+        price_cfg = pricing.get(platform, {}).get(model, {})
+        if not price_cfg:
+            continue
+
+        for idx in indices:
+            entry = records[idx]
+            typ_class = _classify_type(entry.get("type", ""))
+            if typ_class not in ("input", "output"):
+                continue
+
+            tokens = entry.get("tokens", 0)
+            cost = entry.get("cost", 0.0)
+            if not tokens or not cost:
+                continue
+
+            unit_cost = cost / tokens
+            # 尝试匹配 input / output 单价
+            expected_input = price_cfg.get("input")
+            expected_output = price_cfg.get("output")
+            best_match = None
+            best_diff = float("inf")
+
+            for label, price in [("input", expected_input), ("output", expected_output)]:
+                if price is not None:
+                    diff = abs(unit_cost * 1000 - price)  # 通常以 /1K tokens 计价
+                    if diff < best_diff:
+                        best_diff = diff
+                        best_match = label
+
+            if best_match:
+                extra = json.loads(entry.get("extra", "{}"))
+                extra["_price_hint"] = best_match
+                extra["_unit_cost_per_1k"] = round(unit_cost * 1000, 4)
+                entry["extra"] = json.dumps(extra, ensure_ascii=False)
 
 
 def archive_file(filepath: str) -> str:

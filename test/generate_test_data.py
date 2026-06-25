@@ -194,6 +194,61 @@ def generate_csv_gbk():
 
 
 # ═══════════════════════════════════════════════════════════════
+# 8. DeepSeek 官方账单格式 CSV
+# ═══════════════════════════════════════════════════════════════
+
+def generate_deepseek_csv():
+    headers = ["user_id", "utc_date", "model", "api_key_name", "api_key",
+               "type", "price", "amount"]
+    records = [
+        # user_id 在导入时会被忽略 (归入 extra)
+        {"user_id": "u001", "utc_date": "2024-06-01", "model": "deepseek-chat",
+         "api_key_name": "default", "api_key": "sk-xxx1",
+         "type": "input_cache_hit_tokens", "price": "0.002", "amount": "5000"},
+        {"user_id": "u001", "utc_date": "2024-06-01", "model": "deepseek-chat",
+         "api_key_name": "default", "api_key": "sk-xxx1",
+         "type": "input_cache_miss_tokens", "price": "0.002", "amount": "3000"},
+        {"user_id": "u001", "utc_date": "2024-06-01", "model": "deepseek-chat",
+         "api_key_name": "default", "api_key": "sk-xxx1",
+         "type": "output_tokens", "price": "0.002", "amount": "8000"},
+        {"user_id": "u001", "utc_date": "2024-06-01", "model": "deepseek-chat",
+         "api_key_name": "default", "api_key": "sk-xxx1",
+         "type": "request_count", "price": "0", "amount": "120"},
+        {"user_id": "u002", "utc_date": "2024-06-02", "model": "deepseek-reasoner",
+         "api_key_name": "prod", "api_key": "sk-xxx2",
+         "type": "input_cache_hit_tokens", "price": "0.004", "amount": "10000"},
+        {"user_id": "u002", "utc_date": "2024-06-02", "model": "deepseek-reasoner",
+         "api_key_name": "prod", "api_key": "sk-xxx2",
+         "type": "output_tokens", "price": "0.004", "amount": "6000"},
+        {"user_id": "u002", "utc_date": "2024-06-02", "model": "deepseek-reasoner",
+         "api_key_name": "prod", "api_key": "sk-xxx2",
+         "type": "request_count", "price": "0", "amount": "50"},
+    ]
+    write_csv("test_deepseek.csv", headers, records, encoding="utf-8-sig")
+
+
+# ═══════════════════════════════════════════════════════════════
+# 9. 新表头格式: 资源名称 模型 类型 token 账单开始时间 账单结束时间 费用(元)
+# ═══════════════════════════════════════════════════════════════
+
+def generate_new_header_format():
+    headers = ["资源名称", "模型", "类型", "token", "账单开始时间", "账单结束时间", "费用(元)"]
+    records = [
+        {"资源名称": "智障助手v2", "模型": "GPT-4o", "类型": "输入", "token": 150000,
+         "账单开始时间": "2024-06-01", "账单结束时间": "2024-06-01", "费用(元)": 4.50},
+        {"资源名称": "智障助手v2", "模型": "GPT-4o", "类型": "输出", "token": 80000,
+         "账单开始时间": "2024-06-01", "账单结束时间": "2024-06-01", "费用(元)": 3.20},
+        {"资源名称": "代码助手", "模型": "GPT-4-Turbo", "类型": "输入", "token": 200000,
+         "账单开始时间": "2024-06-01", "账单结束时间": "2024-06-01", "费用(元)": 2.00},
+        {"资源名称": "代码助手", "模型": "GPT-4-Turbo", "类型": "输出", "token": 95000,
+         "账单开始时间": "2024-06-01", "账单结束时间": "2024-06-01", "费用(元)": 2.85},
+        {"资源名称": "文档分析", "模型": "DeepSeek-V3", "类型": "输入(缓存命中)", "token": 50000,
+         "账单开始时间": "2024-06-02", "账单结束时间": "2024-06-02", "费用(元)": 0.10},
+    ]
+    write_csv("test_new_header.csv", headers, records, encoding="utf-8-sig")
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main
 # ═══════════════════════════════════════════════════════════════
 
@@ -206,6 +261,8 @@ def main():
     generate_conflict()
     generate_csv_utf8()
     generate_csv_gbk()
+    generate_deepseek_csv()
+    generate_new_header_format()
     print(f"\n完成！所有文件已输出到: {TEST_DIR}")
 
 

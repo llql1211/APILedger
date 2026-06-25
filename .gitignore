@@ -19,3 +19,4 @@ data/archive/
 data/api_ledger.db
 data/api_ledger.db-journal
 data/api_ledger_config.json
+data/config.json

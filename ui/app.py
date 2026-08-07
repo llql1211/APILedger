@@ -148,11 +148,13 @@ class _DashboardTab(ctk.CTkFrame):
         tree_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         tree_frame.pack_propagate(False)
 
+        self._tree_style_name = configure_ttk_tree_style()
         self.recent_tree = ttk.Treeview(
             tree_frame,
             columns=("time", "platform", "project", "model", "cost"),
             show="headings",
             height=6,
+            style=self._tree_style_name,
         )
         self.recent_tree.heading("time", text="时间")
         self.recent_tree.heading("platform", text="平台")
@@ -171,9 +173,6 @@ class _DashboardTab(ctk.CTkFrame):
         v_s.grid(row=0, column=1, sticky="ns")
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
-
-        self._tree_style_name = configure_ttk_tree_style()
-        self.recent_tree.configure(style=self._tree_style_name)
 
     def refresh(self):
         """刷新仪表盘数据"""

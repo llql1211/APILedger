@@ -13,7 +13,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 
 from core.db import Database
-from ui.theme import FONT_SIZES, CHART_COLORS
+from ui.theme import FONT_SIZES, CHART_COLORS, apply_mpl_theme
 
 # matplotlib 中文字体
 import matplotlib.pyplot as plt
@@ -59,6 +59,12 @@ class _BaseChart(ctk.CTkFrame):
         self._filters = filters or {}
         self._plot()
 
+    def _prepare_axes(self):
+        """按当前主题刷新 matplotlib 主题参数与画布背景色"""
+        fig_bg, ax_bg = apply_mpl_theme()
+        self.figure.patch.set_facecolor(fig_bg)
+        self.ax.set_facecolor(ax_bg)
+
     def _plot(self):
         """子类实现具体绘图逻辑"""
         raise NotImplementedError
@@ -90,6 +96,7 @@ class _TrendChart(_BaseChart):
         metric_seg.pack(side="right", padx=(0, 8))
 
     def _plot(self):
+        self._prepare_axes()
         self.ax.clear()
 
         # 指标映射
@@ -170,6 +177,7 @@ class _CompareChart(_BaseChart):
         metric_seg.pack(side="right", padx=(0, 8))
 
     def _plot(self):
+        self._prepare_axes()
         self.ax.clear()
 
         field_map = {"平台": "platform", "模型": "model", "项目": "project", "类型": "type"}
@@ -225,6 +233,7 @@ class _PieChart(_BaseChart):
         seg.pack(side="right")
 
     def _plot(self):
+        self._prepare_axes()
         self.ax.clear()
 
         field_map = {"平台": "platform", "模型": "model", "项目": "project", "类型": "type"}

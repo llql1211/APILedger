@@ -10,7 +10,7 @@ import customtkinter as ctk
 from tkinter import ttk
 
 from core.db import Database
-from ui.theme import FONT_SIZES, CHART_COLORS
+from ui.theme import FONT_SIZES, CHART_COLORS, configure_ttk_tree_style
 
 # 表格显示的列
 DISPLAY_COLUMNS = [
@@ -67,13 +67,15 @@ class TablePanel(ctk.CTkFrame):
         tree_frame = ctk.CTkFrame(self)
         tree_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
-        # Treeview
+        # Treeview (使用主题样式)
+        self._tree_style_name = configure_ttk_tree_style()
         self.tree = ttk.Treeview(
             tree_frame,
             columns=COL_KEYS,
             show="headings",
             selectmode="browse",
             height=20,
+            style=self._tree_style_name,
         )
 
         # 设置列
@@ -94,13 +96,8 @@ class TablePanel(ctk.CTkFrame):
         tree_frame.grid_columnconfigure(0, weight=1)
 
         # ── Treeview 样式 ──────────────────
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Treeview",
-                        font=("Microsoft YaHei", FONT_SIZES["small"]),
-                        rowheight=28)
-        style.configure("Treeview.Heading",
-                        font=("Microsoft YaHei", FONT_SIZES["body"], "bold"))
+        # 样式统一由 ui.theme.configure_ttk_tree_style() 管理,
+        # 主题切换时通过更新同名 style 自动生效。
 
     def refresh(self, filters: Dict[str, Any] = None):
         """从数据库加载数据并刷新表格"""

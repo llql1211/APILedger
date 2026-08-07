@@ -9,8 +9,17 @@ from typing import Any, Dict, List
 
 import pandas as pd
 
-from core.models import match_column, make_extra, STANDARD_FIELDS
+from core.models import STANDARD_FIELDS
 from core.db import Database
+from core.presets import (
+    load_all_presets,
+    detect_preset,
+    apply_column_mapping,
+    apply_computed_fields,
+    get_preset_name,
+    get_pricing_dict,
+    get_model_map,
+)
 
 # 目录常量
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +29,13 @@ ARCHIVE_DIR = os.path.join(BASE_DIR, "data", "archive")
 
 
 SUPPORTED_EXTENSIONS = (".xlsx", ".csv")
+
+
+class NoPresetError(Exception):
+    """
+    没有匹配到任何平台预设时抛出。
+    提示用户参照 presets/_template.py 为当前账单格式编写预设。
+    """
 
 
 def scan_input_files() -> List[str]:
@@ -83,6 +99,10 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     """
     读取 xlsx / csv 并解析为标准记录。
     不涉及数据库写入, 纯解析。
+
+    匹配流程:
+      尝试平台预设 (presets/*.py)，匹配则按预设解析。
+      未匹配到任何预设时抛出 NoPresetError（严格模式，拒绝导入）。
     """
     filename = os.path.basename(filepath)
     if filepath.lower().endswith(".csv") and not _is_xlsx_file(filepath):
@@ -94,23 +114,38 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
         return []
 
     headers = list(records[0].keys())
-    col_map = match_column(headers)
-    matched_fields = set(col_map.keys())
     now = datetime.now().isoformat(timespec="seconds")
+
+    # ── 预设匹配 ──
+    presets = load_all_presets()
+    preset = detect_preset(filename, headers, presets)
+
+    if preset is None:
+        raise NoPresetError(
+            f"\n  [拒绝] {filename}: 没有匹配到任何平台预设。\n"
+            f"     表头: {headers}\n"
+            f"     请参照 presets/_template.py 为当前账单格式编写预设，"
+            f"放入 presets/ 目录后重新导入。"
+        )
+
+    preset_name = get_preset_name(preset)
+    col_map = apply_column_mapping(preset.COLUMN_MAPPING, headers)
 
     # 终端提示: 显示列名匹配情况
     print(f"\n  [读取] {filename}", flush=True)
+    print(f"     预设: {preset_name}", flush=True)
     print(f"     原始表头: {headers}", flush=True)
     print(f"     字段映射: {col_map}", flush=True)
-    extra_cols = [h for h in headers if h not in col_map.values()]
-    if extra_cols:
-        print(f"     未匹配列 -> extra: {extra_cols}", flush=True)
+    ignored_cols = [h for h in headers if h not in col_map.values()]
+    if ignored_cols:
+        print(f"     忽略列: {ignored_cols}", flush=True)
     print(f"     数据行数: {len(records)}", flush=True)
 
     parsed: List[Dict[str, Any]] = []
     for row in records:
         entry: Dict[str, Any] = {}
 
+        # 1. 列名映射提取字段
         for field in STANDARD_FIELDS:
             original_col = col_map.get(field)
             if original_col:
@@ -143,16 +178,22 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
 
             entry[field] = val
 
+        # 2. 预设行级处理
+        row_result = _apply_preset_row(preset, row, entry)
+        if row_result is None:
+            continue  # 预设跳过此行
+        entry = row_result
+
         if not entry.get("bill_end") and entry.get("bill_start"):
             entry["bill_end"] = entry["bill_start"]
 
-        entry["extra"] = make_extra(row, matched_fields)
         entry["source_file"] = filename
         entry["imported_at"] = now
         parsed.append(entry)
 
-    # 解析后处理: request_count 分流、type 翻译等
-    post_process_records(parsed)
+    # ── 后处理: unit_price 计算、过滤、价格匹配 ──
+    pricing = get_pricing_dict(preset)
+    _post_process(parsed, pricing)
 
     # 终端提示: 显示处理完成
     models_set = set(r["model"] for r in parsed if r["model"])
@@ -166,50 +207,55 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     return parsed
 
 
-DEEPSEEK_INPUT_TYPES = [
-    "input_cache_hit_tokens",
-    "input_cache_miss_tokens",
-]
-
-# type 值的翻译对照表 (DeepSeek -> 通用中文)
-TYPE_TRANSLATIONS = {
-    "input_cache_hit_tokens": "输入(缓存命中)",
-    "input_cache_miss_tokens": "输入(缓存未命中)",
-    "output_tokens": "输出",
-    "request_count": "调用量",
-}
-
-def post_process_records(records: List[Dict[str, Any]]):
+def _apply_preset_row(preset: Any, raw_row: Dict[str, Any], entry: Dict[str, Any]):
     """
-    解析后的后处理 (按顺序):
-    1. type 翻译 (英文 → 中文)
-    2. request_count 分流: tokens → call_volume
-    3. 模型名称归一化
-    4. 计算 unit_price (若已有则跳过)
-    5. 忽略 unit_price ≈ 0 的记录
-    6. 根据 unit_price 匹配配置价格 → 设置 type
+    预设行级处理 (按顺序):
+    1. DEFAULTS 固定值填充
+    2. parse_row() 自定义解析 (如定义, 返回 None 则跳过此行)
+    3. TYPE_MAP 类型翻译
+    4. COMPUTED 计算字段
+    5. MODEL_MAP 模型名归一化
     """
-    from core.config import normalize_model_name, get_pricing
+    # 1. 固定值填充
+    for field, value in getattr(preset, "DEFAULTS", {}).items():
+        if entry.get(field, "") in ("", None):
+            entry[field] = value
 
-    # ── 第一遍: 基础处理 ──
+    # 2. 自定义行解析 (可在此跳过调用量等特殊记录)
+    parse_row = getattr(preset, "parse_row", None)
+    if callable(parse_row):
+        result = parse_row(raw_row, entry)
+        if result is None:
+            return None  # 跳过此行
+        entry = result
+
+    # 3. 类型翻译
+    typ = entry.get("type", "")
+    tl = getattr(preset, "TYPE_MAP", {}).get(typ)
+    if tl:
+        entry["type"] = tl
+
+    # 4. 计算字段
+    apply_computed_fields(getattr(preset, "COMPUTED", {}), entry)
+
+    # 5. 模型名归一化
+    raw_model = entry.get("model", "")
+    if raw_model:
+        model_map = get_model_map(preset)
+        entry["model"] = model_map.get(raw_model, raw_model)
+
+    return entry
+
+
+def _post_process(records: List[Dict[str, Any]], pricing: dict):
+    """
+    解析后的后处理:
+    1. 计算 unit_price (若为 0 则按 cost/tokens 推算)
+    2. 忽略 unit_price ≈ 0 的记录
+    3. 根据 unit_price 匹配价格表 → 设置 type (可选, 预设定义了 PRICING 时才生效)
+    """
+    # ── 第一遍: 计算 unit_price ──
     for entry in records:
-        typ = entry.get("type", "")
-        tl = TYPE_TRANSLATIONS.get(typ)
-        if tl:
-            entry["type"] = tl
-
-        # request_count 分流: tokens → call_volume
-        if typ == "request_count":
-            entry["call_volume"] = entry["tokens"]
-            entry["tokens"] = 0
-
-        # 模型名称归一化
-        platform = entry.get("platform", "")
-        raw_model = entry.get("model", "")
-        if platform and raw_model:
-            entry["model"] = normalize_model_name(platform, raw_model)
-
-        # 计算 unit_price (单价/百万tokens)
         if entry.get("unit_price", 0.0) == 0.0:
             tokens = entry.get("tokens", 0)
             cost = entry.get("cost", 0.0)
@@ -224,17 +270,17 @@ def post_process_records(records: List[Dict[str, Any]]):
         print(f"     过滤: {filtered} 条（单价为0）", flush=True)
 
     # ── 第二遍: 根据 unit_price 匹配类型 ──
-    pricing = get_pricing()
     _apply_price_hint(records, pricing)
 
 
 def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
     """
-    根据配置的单价表, 用计算出的 unit_price 匹配并设置 type。
+    根据预设价格表 (PRICING), 用 unit_price 匹配并设置 type。
 
-    遍历每条 type 尚未明确区分 (缓存命中/未命中/输出) 的记录,
-    查对应平台 x 模型的 input_hit / input_miss / output 价格,
-    取最接近的匹配结果直接覆写 type 字段。
+    仅当预设定义了 PRICING 且有 type 未明确的记录时生效。
+    pricing 结构: { model: {"input_hit":.., "input_miss":.., "output":..,
+                            "history": [{"until": "日期", ...}]} }
+    会依据 bill_start 匹配对应时间段的历史价格。
     """
     if not pricing:
         return
@@ -251,12 +297,24 @@ def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
 
         platform = entry.get("platform", "")
         model = entry.get("model", "")
-        if not platform or not model:
+        if not model:
             continue
 
-        price_cfg = pricing.get(platform, {}).get(model, {})
+        # 尝试预设格式 (model 顶层) 或旧格式 (platform → model)
+        price_cfg = pricing.get(model)
+        if not price_cfg:
+            price_cfg = pricing.get(platform, {}).get(model, {})
         if not price_cfg:
             continue
+
+        # 预设格式支持 history 时间段匹配
+        if isinstance(price_cfg, dict) and "history" in price_cfg:
+            bill_date = entry.get("bill_start", "")
+            history = price_cfg.get("history", [])
+            for h in sorted(history, key=lambda x: str(x.get("until", "")), reverse=True):
+                if bill_date and bill_date <= str(h.get("until", "")):
+                    price_cfg = h
+                    break
 
         best_label = None
         best_diff = float("inf")

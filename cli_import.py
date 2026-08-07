@@ -23,6 +23,7 @@ from core.importer import (
     scan_input_files,
     process_single_file,
     commit_import,
+    NoPresetError,
     INPUT_DIR,
 )
 
@@ -60,6 +61,13 @@ def main():
         for fpath in files:
             try:
                 res = process_single_file(db, fpath)
+            except NoPresetError as e:
+                print(f"\n  [跳过] {os.path.basename(fpath)}: 无匹配预设")
+                for line in str(e).splitlines():
+                    print(f"      {line.strip()}")
+                print()
+                total_errors += 1
+                continue
             except Exception as e:
                 print(f"  [错误] {os.path.basename(fpath)}: {e}\n")
                 total_errors += 1

@@ -2,38 +2,52 @@
 
 API 账单数据管理与可视化工具。
 
+## 使用说明
+
+1. **放入账单**：将 API 平台的账单文件（`.csv` / `.xlsx`）放入 `data/input/`
+2. **导入数据**：
+   - 命令行：`python cli_import.py`（仅导入，不打开界面）
+   - 图形界面：`python main.py`，点导入按钮
+3. **自动归档**：导入成功的文件自动移至 `data/archive/`
+
+账单必须能匹配 `presets/` 下某个平台预设，否则导入会被拒绝并提示编写预设（参照 `presets/_template.py`）。
+
 ## 输入文件格式
 
-### 列名自动匹配
+### 平台导入预设
 
-程序对 `.xlsx` / `.csv` 表头进行**关键词模糊匹配**，无需严格的列名约定。匹配按关键词长度降序优先（长关键词优先），避免误匹配。
+程序会优先匹配 `presets/` 下的**平台预设**。每个平台一个 `.py` 文件，定义该平台的相关规则：
 
-以下为各标准字段的可识别关键词：
+- 列名映射（表头 → 标准字段）
+- 默认值（如无 platform 列时自动填充）
+- type 翻译（统一为：输入 / 输出 / 缓存输入）
+- 模型名映射（平台原始名 → 统一名称）
+- 可选 `parse_row` 函数（处理从单个单元格解析多字段、跳过特殊记录等复杂逻辑）
 
-| 标准字段 | 类型 | 说明 | 可匹配的列名关键词 |
+匹配规则：先按文件名关键词，再按表头关键词，命中即使用该预设。**匹配不到任何预设时拒绝导入**，提示参照 `presets/_template.py` 编写预设。
+
+新增平台只需在 `presets/` 放一个 `.py` 文件，无需改代码。
+
+### 标准字段
+
+所有平台账单最终统一映射到以下标准字段（在预设的 `COLUMN_MAPPING` 中声明）：
+
+| 标准字段 | 类型 | 说明 | 数据格式 / 可选范围 |
 | :---: | :---: | :---: | ----- |
-| `bill_start` | TEXT | 账单开始时间 | 账单开始时间、start_time、调用时间、call_time、时间、time、账单日期、日期、date、utc_date |
-| `bill_end` | TEXT | 账单截止时间 | 账单截止时间、截止时间、end_time、end、账单结束时间、结束时间 |
-| `platform` | TEXT | 平台名称 | 平台、platform、供应商、provider |
-| `project` | TEXT | 项目名 | 项目名、项目、project、应用、app、application、资源名称、resource、api_key_name |
-| `model` | TEXT | 模型名称 | 模型、模型名称、model、model name、名称、name、接口、api、API、服务、service |
-| `type` | TEXT | 计费类型 | 类型、计费类型、type、类别、category |
-| `tokens` | INTEGER | Tokens 数量 | 令牌、tokens、token、总数、总量、amount |
-| `call_volume` | INTEGER | 调用量 | 调用量、调用次数、calls、次数、count、请求次数、requests、request_count |
-| `cost` | REAL | 金额 | 金额、费用、消费、cost、spend、price、总费用、total_cost、计费金额、费用(元) |
-| `unit_price` | REAL | 单价/百万tokens | 单价、unit_price |
-
-**匹配示例**：
-
-| 表头 | 映射结果 | 说明 |
-| ----- | ----- | :---: |
-| `["日期", "API", "消费", "项目"]` | `bill_start`, `model`, `cost`, `project` | 最简场景 |
-| `["账单开始时间", "账单截止时间", "平台", "项目名", "模型", "类型", "令牌", "调用量", "金额"]` | 全部标准字段逐一匹配 | 完整场景 |
-| `["Date", "Model Name", "Cost", "Platform"]` | `bill_start`, `model`, `cost`, `platform` | 英文列名 |
+| `bill_start` | TEXT | 账单开始时间 | `yyyy-MM-dd` 或 `yyyy-MM-dd HH:mm:ss` |
+| `bill_end` | TEXT | 账单截止时间 | `yyyy-MM-dd` 或 `yyyy-MM-dd HH:mm:ss`；缺省时自动取 `bill_start` |
+| `platform` | TEXT | 平台名称 | 任意文本，如 `DeepSeek`、`Paratera` |
+| `project` | TEXT | 项目名 | 任意文本，如 `sakura`、`vscode` |
+| `model` | TEXT | 模型名称 | 任意文本，如 `DeepSeek-V4-Flash`、`Kimi-K2.5` |
+| `type` | TEXT | 计费类型 | 仅限：`输入`、`输出`、`缓存输入` |
+| `tokens` | INTEGER | Tokens 数量 | 非负整数 |
+| `call_volume` | INTEGER | 调用量 | 非负整数 |
+| `cost` | REAL | 金额 | 非负浮点数，单位：元 |
+| `unit_price` | REAL | 单价 | 非负浮点数，单位：元/百万tokens |
 
 ### 未匹配的列
 
-任何未在上述映射范围内的列，其全部数据会被序列化为 JSON 存入 `extra` 字段，数据不会丢失。
+未在 `COLUMN_MAPPING` 中映射的列会被忽略，不写入数据库。
 
 ### 时间粒度兼容
 
@@ -47,7 +61,8 @@ API 账单数据管理与可视化工具。
 ```text
 APILedger/
 ├── core/                   # 核心逻辑层
-│   ├── models.py           # 数据模型 & 列名映射规则
+│   ├── models.py           # 标准字段定义
+│   ├── presets.py          # 平台预设引擎 (加载/匹配/应用 presets/*.py)
 │   ├── db.py               # SQLite 数据库操作 (建表/UPSERT/聚合查询)
 │   └── importer.py         # XLSX 文件扫描、列匹配、导入、归档
 ├── ui/                     # 可视化层 (CustomTkinter)
@@ -57,11 +72,14 @@ APILedger/
 │       ├── filter_panel.py # 筛选面板 (日期/平台/项目/模型/类型/搜索)
 │       ├── table_panel.py  # 数据表格 (排序/统计)
 │       └── chart_panel.py  # 图表面板 (折线趋势/柱状对比/饼图分布)
+├── presets/                # 平台导入预设 (每平台一个 .py 文件)
+│   ├── deepseek.py
+│   ├── paratera.py
+│   └── _template.py        # 预设模板 (新建平台时复制参考)
 ├── data/                   # 用户数据目录
 │   ├── input/              # 待导入的 XLSX / CSV 文件存放处
 │   ├── archive/            # 已导入文件的归档目录
-│   ├── api_ledger.db       # SQLite 数据库文件
-│   └── config.json         # 用户配置 (模型映射/单价表)
+│   └── api_ledger.db       # SQLite 数据库文件
 ├── main.py                 # 程序入口
 └── pixi.toml               # Pixi 环境配置
 ```
@@ -82,12 +100,11 @@ APILedger/
 | `platform` | TEXT | 平台名称 |
 | `project` | TEXT | 项目名 |
 | `model` | TEXT | 模型名称 |
-| `type` | TEXT | 计费类型 (输入/输出/缓存输入 等) |
+| `type` | TEXT | 计费类型 (输入/输出/缓存输入) |
 | `tokens` | INTEGER | Tokens 数量 |
 | `call_volume` | INTEGER | 调用量 |
 | `cost` | REAL | 金额 |
 | `unit_price` | REAL | 单价 (元/百万tokens) |
-| `extra` | TEXT | 未匹配列的原始数据 (JSON) |
 | `source_file` | TEXT | 来源文件名 |
 | `imported_at` | TEXT | 导入时间戳 |
 

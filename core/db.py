@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS api_records (
     cost            REAL NOT NULL DEFAULT 0.0,
     unit_price      REAL NOT NULL DEFAULT 0.0,  -- 单价/百万tokens
 
-    extra           TEXT NOT NULL DEFAULT '{}',   -- JSON
     source_file     TEXT NOT NULL DEFAULT '',
     imported_at     TEXT NOT NULL DEFAULT '',
 
@@ -48,15 +47,14 @@ CREATE_INDEXES_SQL = [
 
 UPSERT_SQL = """
 INSERT INTO api_records (bill_start, bill_end, platform, project, model, type,
-                         tokens, call_volume, cost, unit_price, extra, source_file, imported_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         tokens, call_volume, cost, unit_price, source_file, imported_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(bill_start, bill_end, platform, project, model, type)
 DO UPDATE SET
     tokens      = excluded.tokens,
     call_volume = excluded.call_volume,
     cost        = excluded.cost,
     unit_price  = excluded.unit_price,
-    extra       = excluded.extra,
     source_file = excluded.source_file,
     imported_at = excluded.imported_at
 """
@@ -86,6 +84,14 @@ class Database:
             cur.execute("ALTER TABLE api_records ADD COLUMN unit_price REAL NOT NULL DEFAULT 0.0;")
         except Exception:
             pass  # 列已存在
+        # 迁移旧表: 移除已废弃的 extra 列 (若存在)
+        cols = [r[1] for r in cur.execute("PRAGMA table_info(api_records)").fetchall()]
+        if "extra" in cols:
+            try:
+                cur.execute("ALTER TABLE api_records DROP COLUMN extra;")
+                print("  [数据库] 已移除废弃的 extra 列", flush=True)
+            except Exception:
+                pass  # 旧 SQLite 不支持 DROP COLUMN, 忽略
         for idx_sql in CREATE_INDEXES_SQL:
             cur.execute(idx_sql)
         self.conn.commit()
@@ -178,7 +184,7 @@ class Database:
 
         records 中每项应包含:
           bill_start, bill_end, platform, project, model, type,
-          tokens, call_volume, cost, extra, source_file, imported_at
+          tokens, call_volume, cost, source_file, imported_at
         """
         if not records:
             return 0
@@ -197,7 +203,6 @@ class Database:
                 int(r.get("call_volume", 0) or 0),
                 float(r.get("cost", 0.0) or 0.0),
                 float(r.get("unit_price", 0.0) or 0.0),
-                r.get("extra", "{}"),
                 r.get("source_file", ""),
                 r.get("imported_at", now),
             ))

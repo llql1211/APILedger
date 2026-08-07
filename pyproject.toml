@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "APILedger"
+version = "0.1.0"
+description = "API 调用台账管理工具"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "customtkinter>=5.2.0",
+    "matplotlib>=3.8",
+    "pandas>=2.0",
+    "openpyxl>=3.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "ui*"]

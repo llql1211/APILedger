@@ -174,8 +174,8 @@ class _DashboardTab(ctk.CTkFrame):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-    def refresh(self):
-        """刷新仪表盘数据"""
+    def refresh(self, filters: Dict[str, Any] = None):
+        """刷新仪表盘数据 (支持筛选条件)"""
         # 按当前主题设置图表背景色
         fig_bg, ax_bg = apply_mpl_theme()
         self.pie_figure.patch.set_facecolor(fig_bg)
@@ -184,7 +184,10 @@ class _DashboardTab(ctk.CTkFrame):
         self.trend_ax.set_facecolor(ax_bg)
 
         try:
-            records = self.db.get_all(order_by="bill_start DESC")
+            if filters:
+                records, _ = self.db.query(order_by="bill_start DESC", **filters)
+            else:
+                records = self.db.get_all(order_by="bill_start DESC")
         except Exception:
             records = []
         self._data = records
@@ -393,7 +396,7 @@ class App(ctk.CTk):
         """刷新仪表盘、表格、图表"""
         apply_mpl_theme()
         filters = self._current_filters.copy() or None
-        self.dashboard.refresh()
+        self.dashboard.refresh(filters)
         self.table_panel.refresh(filters)
         self.chart_panel.refresh(filters)
         self.filter_panel.refresh_options()

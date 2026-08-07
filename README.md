@@ -9,6 +9,7 @@ API 账单数据管理与可视化工具。
    - 命令行：`python cli_import.py`（仅导入，不打开界面）
    - 图形界面：`python main.py`，点导入按钮
 3. **自动归档**：导入成功的文件自动移至 `data/archive/`
+4. **导出报告**：图形界面点「📊 导出报告」，生成自包含的 HTML 报告（汇总卡片 + 交互图表 + 可筛选明细表），用浏览器打开。首次导出会自动下载 echarts 库到本地，之后离线可用
 
 账单必须能匹配 `presets/` 下某个平台预设，否则导入会被拒绝并提示编写预设（参照 `presets/_template.py`）。
 
@@ -63,10 +64,11 @@ APILedger/
 ├── core/                   # 核心逻辑层
 │   ├── models.py           # 标准字段定义
 │   ├── presets.py          # 平台预设引擎 (加载/匹配/应用 presets/*.py)
+│   ├── report.py           # HTML 报告生成器 (ECharts 图表 + 前端筛选)
 │   ├── db.py               # SQLite 数据库操作 (建表/UPSERT/聚合查询)
 │   └── importer.py         # XLSX 文件扫描、列匹配、导入、归档
 ├── ui/                     # 可视化层 (CustomTkinter)
-│   ├── app.py              # 主窗口布局 & Tab 管理
+│   ├── app.py              # 主窗口布局 & Tab 管理 (含导出报告按钮)
 │   ├── theme.py            # 主题颜色 & 样式常量
 │   └── panels/
 │       ├── filter_panel.py # 筛选面板 (日期/平台/项目/模型/类型/搜索)
@@ -80,11 +82,12 @@ APILedger/
 │   ├── input/              # 待导入的 XLSX / CSV 文件存放处
 │   ├── archive/            # 已导入文件的归档目录
 │   └── api_ledger.db       # SQLite 数据库文件
+├── output/                 # HTML 报告输出 (含本地 echarts.min.js)
 ├── main.py                 # 程序入口
 └── pixi.toml               # Pixi 环境配置
 ```
 
-`input/`、`archive/`、`data/` 三个目录均为运行时自动创建，不纳入版本控制。
+`input/`、`archive/`、`data/`、`output/` 目录均为运行时自动创建，不纳入版本控制。
 
 ---
 

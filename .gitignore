@@ -16,3 +16,6 @@ __pycache__/
 # user data
 data/
 !data/config.example.json
+
+# runtime output (HTML reports, auto-downloaded echarts)
+output/

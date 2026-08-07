@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import os
 import threading
+import webbrowser
+from datetime import datetime
+from tkinter import filedialog
 from typing import Any, Dict, List, Optional
 
 import customtkinter as ctk
@@ -20,12 +23,17 @@ from core.importer import (
     commit_import,
     INPUT_DIR,
 )
+from core.report import build_html
 from ui.theme import (
     setup_appearance,
     WINDOW_WIDTH,
     WINDOW_HEIGHT,
     FONT_SIZES,
     CHART_COLORS,
+    get_current_mode,
+    toggle_appearance,
+    configure_ttk_tree_style,
+    apply_mpl_theme,
 )
 from ui.panels.filter_panel import FilterPanel
 from ui.panels.table_panel import TablePanel
@@ -164,11 +172,18 @@ class _DashboardTab(ctk.CTkFrame):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-        style = ttk.Style()
-        style.configure("Dashboard.Treeview", font=("Microsoft YaHei", FONT_SIZES["small"]), rowheight=24)
+        self._tree_style_name = configure_ttk_tree_style()
+        self.recent_tree.configure(style=self._tree_style_name)
 
     def refresh(self):
         """刷新仪表盘数据"""
+        # 按当前主题设置图表背景色
+        fig_bg, ax_bg = apply_mpl_theme()
+        self.pie_figure.patch.set_facecolor(fig_bg)
+        self.pie_ax.set_facecolor(ax_bg)
+        self.trend_figure.patch.set_facecolor(fig_bg)
+        self.trend_ax.set_facecolor(ax_bg)
+
         try:
             records = self.db.get_all(order_by="bill_start DESC")
         except Exception:
@@ -291,6 +306,15 @@ class App(ctk.CTk):
         )
         self.import_status.pack(side="left", padx=(4, 0))
 
+        # 导出报告按钮
+        self.export_btn = ctk.CTkButton(
+            toolbar, text="📊 导出报告", command=self._on_export_clicked,
+            height=32, width=110,
+            font=("Microsoft YaHei", FONT_SIZES["small"]),
+            fg_color="#2fa572", hover_color="#238a5c",
+        )
+        self.export_btn.pack(side="right", padx=(0, 8))
+
         # 筛选刷新按钮 (右侧)
         self.refresh_btn = ctk.CTkButton(
             toolbar, text="🔄 刷新", command=self._refresh_all,
@@ -298,6 +322,17 @@ class App(ctk.CTk):
             font=("Microsoft YaHei", FONT_SIZES["small"]),
         )
         self.refresh_btn.pack(side="right", padx=12)
+
+        # 明暗模式切换按钮
+        _mode = get_current_mode()
+        self.theme_btn = ctk.CTkButton(
+            toolbar,
+            text="🌙 暗色" if _mode == "light" else "☀️ 亮色",
+            command=self._toggle_theme,
+            height=32, width=80,
+            font=("Microsoft YaHei", FONT_SIZES["small"]),
+        )
+        self.theme_btn.pack(side="right", padx=(0, 8))
 
         # ── 左侧筛选面板 ─────────────────────
         self.filter_panel = FilterPanel(
@@ -357,6 +392,7 @@ class App(ctk.CTk):
 
     def _refresh_all(self):
         """刷新仪表盘、表格、图表"""
+        apply_mpl_theme()
         filters = self._current_filters.copy() or None
         self.dashboard.refresh()
         self.table_panel.refresh(filters)
@@ -365,6 +401,60 @@ class App(ctk.CTk):
 
         count_str = f" | 筛选已应用" if self._current_filters else ""
         self.status_bar.configure(text=f"数据库: api_ledger.db{count_str}")
+
+    def _toggle_theme(self):
+        """切换明/暗模式"""
+        new_mode = toggle_appearance()
+        apply_mpl_theme(new_mode)
+        # ttk 表格样式就地更新 (同名 style 自动应用到所有 Treeview)
+        configure_ttk_tree_style(new_mode)
+        self.theme_btn.configure(text="☀️ 亮色" if new_mode == "dark" else "🌙 暗色")
+        self._refresh_all()
+
+    # ═══════════════════════════════════════════════
+    # 导出报告
+    # ═══════════════════════════════════════════════
+
+    def _on_export_clicked(self):
+        """导出 HTML 报告: 保存文件并用浏览器打开"""
+        default_name = f"APILedger_报告_{datetime.now().strftime('%Y%m%d')}.html"
+        filepath = filedialog.asksaveasfilename(
+            title="导出 HTML 报告",
+            defaultextension=".html",
+            initialfile=default_name,
+            filetypes=[("HTML 文件", "*.html"), ("所有文件", "*.*")],
+        )
+        if not filepath:
+            return  # 用户取消
+
+        self.export_btn.configure(state="disabled", text="⏳ 生成中...")
+        self.status_bar.configure(text="正在生成报告...")
+
+        # 后台线程生成 (echarts 首次下载可能耗时)
+        t = threading.Thread(target=self._run_export_thread, args=(filepath,), daemon=True)
+        t.start()
+
+    def _run_export_thread(self, filepath: str):
+        """后台线程: 生成 HTML 报告并写入文件"""
+        try:
+            html = build_html(self.db)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(html)
+            self.after(0, self._finish_export, filepath, None)
+        except Exception as e:
+            self.after(0, self._finish_export, None, str(e))
+
+    def _finish_export(self, filepath: str, error: str | None):
+        """导出结束: 恢复按钮并显示结果"""
+        self.export_btn.configure(state="normal", text="📊 导出报告")
+        if error:
+            self.status_bar.configure(text=f"导出失败: {error}")
+            return
+        self.status_bar.configure(text=f"报告已保存: {filepath}")
+        try:
+            webbrowser.open(f"file://{os.path.abspath(filepath)}")
+        except Exception:
+            pass
 
     # ═══════════════════════════════════════════════
     # 导入流程

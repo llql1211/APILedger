@@ -1,8 +1,8 @@
 """
 APILedger - 导入冲突确认弹窗
 
-(当前已改为按 key 自动聚合求和, check_conflicts 不再返回冲突,
- 此对话框保留备用。)
+当导入记录与数据库已有记录 (同 key) 数值不一致时，
+弹出对话框列出新旧差异 (含汇总)，供用户选择覆盖还是跳过。
 """
 
 from typing import Any, Dict, List, Optional
@@ -23,8 +23,8 @@ class ConflictDialog(ctk.CTkToplevel):
         total_new = len(conflicts)
 
         self.title("导入冲突 — 请确认")
-        self.geometry("640x480")
-        self.minsize(540, 360)
+        self.geometry("720x520")
+        self.minsize(620, 400)
         self.transient(parent)
         self.grab_set()
 
@@ -39,13 +39,33 @@ class ConflictDialog(ctk.CTkToplevel):
 
         desc = ctk.CTkLabel(
             self,
-            text="下表中的记录在数据库中已存在 (唯一键一致)，但数值发生变化。\n"
-                 "请检查后选择处理方式：",
+            text="以下记录在数据库中已存在 (同日期/平台/项目/模型/类型)，但数值发生变化。\n"
+                 "请检查差异后选择处理方式：",
             font=("Microsoft YaHei", FONT_SIZES["body"]),
             anchor="w",
             justify="left",
         )
-        desc.pack(padx=20, pady=(0, 12), fill="x")
+        desc.pack(padx=20, pady=(0, 8), fill="x")
+
+        # ── 汇总统计 ────────────────────────
+        old_tokens = sum(int(c.get("existing", {}).get("tokens", 0) or 0) for c in conflicts)
+        new_tokens = sum(int(c.get("row", {}).get("tokens", 0) or 0) for c in conflicts)
+        old_cost = sum(float(c.get("existing", {}).get("cost", 0.0) or 0.0) for c in conflicts)
+        new_cost = sum(float(c.get("row", {}).get("cost", 0.0) or 0.0) for c in conflicts)
+
+        summary_frame = ctk.CTkFrame(self, corner_radius=6, border_width=1, fg_color="#f8f6f0")
+        summary_frame.pack(padx=20, pady=(0, 8), fill="x")
+        ctk.CTkLabel(
+            summary_frame,
+            text=(
+                f"共 {total_new} 条:  Tokens  {old_tokens:,} → {new_tokens:,}   "
+                f"金额  ¥{old_cost:,.2f} → ¥{new_cost:,.2f}  "
+                f"(差 {new_cost - old_cost:+,.2f})"
+            ),
+            font=("Consolas", FONT_SIZES["body"]),
+            anchor="w",
+            text_color="#c0392b",
+        ).pack(padx=12, pady=8, fill="x")
 
         # ── 可滚动的冲突列表 ────────────────
         scroll_frame = ctk.CTkScrollableFrame(self, corner_radius=8)

@@ -192,6 +192,13 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     pricing = get_pricing_dict(preset)
     _post_process(parsed, pricing)
 
+    # ── 文件内聚合: 同 key (date, platform, project, model, type) 求和 ──
+    before = len(parsed)
+    parsed = _merge_by_key(parsed)
+    merged = before - len(parsed)
+    if merged:
+        print(f"     合并: {merged} 条同 key 记录", flush=True)
+
     # 终端提示: 显示处理完成
     models_set = set(r["model"] for r in parsed if r["model"])
     types_set = set(r["type"] for r in parsed if r["type"])
@@ -202,6 +209,38 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
     print(f"     tokens: {total_tokens:,}, 金额: {total_cost:.2f}", flush=True)
 
     return parsed
+
+
+def _merge_by_key(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    按 (date, platform, project, model, type) 聚合求和。
+    用于合并同一账单文件内同 key 的多条记录 (如平台调价对冲、同天多时段)。
+
+    返回合并后的列表，顺序保持首次出现的顺序。
+    """
+    merged: Dict[tuple, Dict[str, Any]] = {}
+    order: List[tuple] = []
+
+    for r in records:
+        key = (
+            str(r.get("bill_start", ""))[:10],
+            r.get("platform", ""),
+            r.get("project", ""),
+            r.get("model", ""),
+            r.get("type", ""),
+        )
+        if key in merged:
+            merged[key]["tokens"] += int(r.get("tokens", 0) or 0)
+            merged[key]["cost"] += float(r.get("cost", 0.0) or 0.0)
+            # unit_price 取新值; source_file 合并去重
+            src = merged[key].get("source_file", "")
+            if r.get("source_file") and r["source_file"] not in src:
+                merged[key]["source_file"] = (src + "," + r["source_file"]).strip(",")
+        else:
+            merged[key] = dict(r)
+            order.append(key)
+
+    return [merged[k] for k in order]
 
 
 def _apply_preset_row(preset: Any, raw_row: Dict[str, Any], entry: Dict[str, Any]):

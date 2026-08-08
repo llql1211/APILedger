@@ -4,7 +4,6 @@ APILedger - XLSX / CSV 文件扫描、读取、列匹配、两阶段导入、归
 
 import os
 import shutil
-from datetime import datetime
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -114,7 +113,6 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
         return []
 
     headers = list(records[0].keys())
-    now = datetime.now().isoformat(timespec="seconds")
 
     # ── 预设匹配 ──
     presets = load_all_presets()
@@ -155,7 +153,7 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
                         val = float(str(val).replace(",", ""))
                     except (ValueError, TypeError):
                         val = 0.0
-                elif field in ("tokens", "call_volume"):
+                elif field == "tokens":
                     try:
                         val = int(float(str(val).replace(",", "")))
                     except (ValueError, TypeError):
@@ -168,8 +166,6 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
             else:
                 val = ""
                 if field == "tokens":
-                    val = 0
-                elif field == "call_volume":
                     val = 0
                 elif field == "cost":
                     val = 0.0
@@ -184,11 +180,12 @@ def parse_records_from_file(filepath: str) -> List[Dict[str, Any]]:
             continue  # 预设跳过此行
         entry = row_result
 
-        if not entry.get("bill_end") and entry.get("bill_start"):
-            entry["bill_end"] = entry["bill_start"]
+        # 时间粒度统一为日期 (YYYY-MM-DD): 截断小时部分
+        # 按天聚合, 跨天记录归入 bill_start 那天
+        if entry.get("bill_start"):
+            entry["bill_start"] = str(entry["bill_start"])[:10]
 
         entry["source_file"] = filename
-        entry["imported_at"] = now
         parsed.append(entry)
 
     # ── 后处理: unit_price 计算、过滤、价格匹配 ──
@@ -251,8 +248,10 @@ def _post_process(records: List[Dict[str, Any]], pricing: dict):
     """
     解析后的后处理:
     1. 计算 unit_price (若为 0 则按 cost/tokens 推算)
-    2. 忽略 unit_price ≈ 0 的记录
+    2. 过滤空记录 (无 tokens 且无费用)
     3. 根据 unit_price 匹配价格表 → 设置 type (可选, 预设定义了 PRICING 时才生效)
+
+    注意: 负费用 (退款/对冲) 记录会被保留, 不计入过滤。
     """
     # ── 第一遍: 计算 unit_price ──
     for entry in records:
@@ -262,12 +261,15 @@ def _post_process(records: List[Dict[str, Any]], pricing: dict):
             if tokens > 0 and cost > 0:
                 entry["unit_price"] = round(cost * 1_000_000 / tokens, 4)
 
-    # ── 过滤: 忽略 unit_price ≈ 0 的记录 ──
+    # ── 过滤: 仅丢弃 无 tokens 且无费用 的空记录 ──
     before = len(records)
-    records[:] = [r for r in records if r.get("unit_price", 0.0) > 1e-9]
+    records[:] = [
+        r for r in records
+        if int(r.get("tokens", 0) or 0) != 0 or abs(float(r.get("cost", 0.0) or 0.0)) > 1e-9
+    ]
     filtered = before - len(records)
     if filtered:
-        print(f"     过滤: {filtered} 条（单价为0）", flush=True)
+        print(f"     过滤: {filtered} 条（无 tokens 且无费用）", flush=True)
 
     # ── 第二遍: 根据 unit_price 匹配类型 ──
     _apply_price_hint(records, pricing)
@@ -288,7 +290,7 @@ def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
     for entry in records:
         typ = entry.get("type", "")
         # 已精确区分的不再修改
-        if typ in ("输入(缓存命中)", "输入(缓存未命中)", "输出", "调用量"):
+        if typ in ("输入", "输出", "缓存输入"):
             continue
 
         up = entry.get("unit_price", 0.0)

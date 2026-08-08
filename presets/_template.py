@@ -31,14 +31,12 @@ MATCH_HEADERS = ["你的平台列名1", "你的平台列名2"]
 # 匹配方式：对表头做子串匹配（不区分大小写、忽略空格），
 # 每个标准字段只匹配一列，每列只被使用一次；关键词越长越优先。
 COLUMN_MAPPING = {
-    "bill_start":   ["账单开始时间", "start_time", "utc_date"],  # 计费开始时间
-    "bill_end":     ["账单结束时间", "end_time"],                # 计费结束时间
+    "bill_start":   ["账单开始时间", "start_time", "utc_date"],  # 日期 (按天聚合, 自动截断到 YYYY-MM-DD)
     "platform":     ["平台"],                                     # 平台名（若无此列，用 DEFAULTS 填）
     "project":      ["项目", "资源名称", "api_key_name"],        # 项目名
     "model":        ["模型", "model"],                            # 模型名
     "type":         ["类型", "type"],                             # 计费类型
     "tokens":       ["tokens", "token", "amount"],               # tokens 数量
-    "call_volume":  ["调用量", "calls", "次数"],                  # 调用次数（可选）
     "cost":         ["金额", "费用", "cost"],                     # 金额
     "unit_price":   ["单价", "unit_price"],                       # 单价（可选，见下方说明）
 }
@@ -60,13 +58,17 @@ DEFAULTS = {
 # ═══════════════════════════════════════════════════
 
 # 把本平台账单里的原始 type 值翻译成标准中文。
-# 标准中文目前约定为：输入(缓存命中) / 输入(缓存未命中) / 输出 / 调用量
+# 标准中文目前约定为：输入 / 输出 / 缓存输入
 # 若账单 type 已是标准中文，可留空 dict。
 TYPE_MAP = {
     "input":        "输入",  # 示例：英文原值 → 标准中文
     "output":       "输出",
     "cached_input": "缓存输入",
 }
+
+# 需要整体跳过的 type 原始值 (如免费/无意义的计费类型)。
+# 命中这些 type 的记录整行不导入。留空集则不跳过任何 type。
+SKIP_TYPES = set()
 
 
 # ═══════════════════════════════════════════════════
@@ -117,7 +119,10 @@ MODEL_MAP = {
 #     m = re.match(r"^(\S+)\s*:\s*([\d,]+)\s*tokens?\s*$", str(raw_row.get("配置描述", "")))
 #     if not m:
 #         return None  # 无法解析，跳过该行
-#     mapped_row["type"] = TYPE_MAP.get(m.group(1), m.group(1))
+#     type_raw = m.group(1)
+#     if type_raw in SKIP_TYPES:   # 命中 SKIP_TYPES 的 type 整行跳过
+#         return None
+#     mapped_row["type"] = TYPE_MAP.get(type_raw, type_raw)
 #     mapped_row["tokens"] = int(m.group(2).replace(",", ""))
 #     return mapped_row
 

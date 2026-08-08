@@ -71,7 +71,7 @@ class _BaseChart(ctk.CTkFrame):
 
 
 class _TrendChart(_BaseChart):
-    """折线图: 按时间汇总费用/tokens/调用量趋势, 可切换聚合粒度"""
+    """折线图: 按时间汇总费用/tokens 趋势, 可切换聚合粒度"""
 
     def _build_toolbar(self, frame: ctk.CTkFrame):
         # ⚡目前只绘制费用, 提供粒度切换: 日/周/月
@@ -87,11 +87,11 @@ class _TrendChart(_BaseChart):
 
         self._metric = ctk.StringVar(value="费用")
         metric_seg = ctk.CTkSegmentedButton(
-            frame, values=["费用", "Tokens", "调用量"],
+            frame, values=["费用", "Tokens"],
             variable=self._metric,
             command=lambda v: self._plot(),
             font=("Microsoft YaHei", FONT_SIZES["small"]),
-            width=300,
+            width=250,
         )
         metric_seg.pack(side="right", padx=(0, 8))
 
@@ -100,17 +100,17 @@ class _TrendChart(_BaseChart):
         self.ax.clear()
 
         # 指标映射
-        metric_map = {"费用": "cost", "Tokens": "tokens", "调用量": "call_volume"}
+        metric_map = {"费用": "cost", "Tokens": "tokens"}
         value_field = metric_map.get(self._metric.get(), "cost")
 
-        # 粒度映射
+        # 粒度映射 (date 列已是日期)
         gran = self._granularity.get()
         if gran == "日":
-            group_by = "date(bill_start)"
+            group_by = "date"
         elif gran == "周":
-            group_by = "strftime('%Y-%W', bill_start)"
+            group_by = "strftime('%Y-%W', date)"
         else:  # 月
-            group_by = "strftime('%Y-%m', bill_start)"
+            group_by = "strftime('%Y-%m', date)"
 
         try:
             data = self.db.aggregate_by_date(
@@ -135,10 +135,8 @@ class _TrendChart(_BaseChart):
         # 格式化 Y 轴
         if value_field == "cost":
             self.ax.set_ylabel("费用 (¥)")
-        elif value_field == "tokens":
-            self.ax.set_ylabel("Tokens")
         else:
-            self.ax.set_ylabel("调用量")
+            self.ax.set_ylabel("Tokens")
 
         self.ax.set_xlabel("时间")
         self.ax.set_title(f"{self._metric.get()}趋势 ({gran})")
@@ -168,11 +166,11 @@ class _CompareChart(_BaseChart):
 
         self._metric = ctk.StringVar(value="费用")
         metric_seg = ctk.CTkSegmentedButton(
-            frame, values=["费用", "Tokens", "调用量"],
+            frame, values=["费用", "Tokens"],
             variable=self._metric,
             command=lambda v: self._plot(),
             font=("Microsoft YaHei", FONT_SIZES["small"]),
-            width=300,
+            width=250,
         )
         metric_seg.pack(side="right", padx=(0, 8))
 
@@ -181,7 +179,7 @@ class _CompareChart(_BaseChart):
         self.ax.clear()
 
         field_map = {"平台": "platform", "模型": "model", "项目": "project", "类型": "type"}
-        metric_map = {"费用": "cost", "Tokens": "tokens", "调用量": "call_volume"}
+        metric_map = {"费用": "cost", "Tokens": "tokens"}
 
         group_field = field_map.get(self._group_field.get(), "platform")
         value_field = metric_map.get(self._metric.get(), "cost")

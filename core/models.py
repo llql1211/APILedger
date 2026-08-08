@@ -8,13 +8,11 @@ APILedger - 数据模型
 # ── 标准字段列表 ──────────────────────────────────
 STANDARD_FIELDS = [
     "bill_start",
-    "bill_end",
     "platform",
     "project",
     "model",
     "type",
     "tokens",
-    "call_volume",
     "cost",
     "unit_price",
 ]

@@ -20,7 +20,6 @@ MATCH_HEADERS = ["配置描述", "费用(元)"]
 # 列名 → 标准字段关键词映射
 COLUMN_MAPPING = {
     "bill_start": ["账单开始时间"],
-    "bill_end":   ["账单结束时间"],
     "project":    ["资源名称"],
     "model":      ["模型"],
     "cost":       ["费用(元)"],
@@ -30,11 +29,15 @@ COLUMN_MAPPING = {
 DEFAULTS = {"platform": "Paratera"}
 
 # type 翻译: 配置描述中的原始值 → 标准中文
+# 缓存存储 (免费, cost=0) 在 parse_row 中跳过, 不导入
 TYPE_MAP = {
     "输入":     "输入",
     "输出":     "输出",
     "缓存输入": "缓存输入",
 }
+
+# 需要跳过的 type 原始值
+SKIP_TYPES = {"缓存存储"}
 
 # 模型名映射
 MODEL_MAP = {
@@ -65,6 +68,10 @@ def parse_row(raw_row: dict, mapped_row: dict) -> dict | None:
         return None
 
     type_raw = m.group(1)
+    # 跳过免费类型 (如缓存存储)
+    if type_raw in SKIP_TYPES:
+        return None
+
     mapped_row["type"] = TYPE_MAP.get(type_raw, type_raw)
     mapped_row["tokens"] = int(m.group(2).replace(",", ""))
     return mapped_row

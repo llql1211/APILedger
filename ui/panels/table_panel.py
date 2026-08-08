@@ -14,14 +14,12 @@ from ui.theme import FONT_SIZES, CHART_COLORS, configure_ttk_tree_style
 
 # 表格显示的列
 DISPLAY_COLUMNS = [
-    ("bill_start",    "开始时间"),
-    ("bill_end",      "截止时间"),
+    ("date",          "日期"),
     ("platform",      "平台"),
     ("project",       "项目"),
     ("model",         "模型"),
     ("type",          "类型"),
     ("tokens",        "Tokens"),
-    ("call_volume",   "调用量"),
     ("cost",          "金额"),
     ("unit_price",    "单价/M"),
     ("source_file",   "来源文件"),
@@ -32,14 +30,12 @@ COL_LABELS = [c[1] for c in DISPLAY_COLUMNS]
 
 # 列宽 (px)
 COL_WIDTHS = {
-    "bill_start":  140,
-    "bill_end":    140,
+    "date":         110,
     "platform":    100,
     "project":     120,
     "model":       180,
     "type":        100,
     "tokens":       90,
-    "call_volume":  90,
     "cost":         90,
     "unit_price":   90,
     "source_file": 150,
@@ -82,7 +78,7 @@ class TablePanel(ctk.CTkFrame):
         for key, label in DISPLAY_COLUMNS:
             width = COL_WIDTHS.get(key, 120)
             self.tree.heading(key, text=label, command=lambda k=key: self._sort_by(k))
-            self.tree.column(key, width=width, minwidth=80, anchor="e" if key in ("tokens", "call_volume", "cost") else "w")
+            self.tree.column(key, width=width, minwidth=80, anchor="e" if key in ("tokens", "cost") else "w")
 
         # 滚动条
         v_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
@@ -119,7 +115,7 @@ class TablePanel(ctk.CTkFrame):
                 if key == "cost":
                     v = f"{float(v or 0):.4f}"
                     total_cost += float(row.get("cost", 0) or 0)
-                elif key in ("tokens", "call_volume"):
+                elif key == "tokens":
                     v = f"{int(v or 0):,}"
                 elif key == "unit_price":
                     up = float(v or 0)
@@ -145,7 +141,7 @@ class TablePanel(ctk.CTkFrame):
 
         def sort_key(row):
             v = row.get(col_key, "")
-            if col_key in ("tokens", "call_volume"):
+            if col_key == "tokens":
                 try:
                     return int(v or 0)
                 except ValueError:
@@ -166,7 +162,7 @@ class TablePanel(ctk.CTkFrame):
                 v = row.get(key, "")
                 if key == "cost":
                     v = f"{float(v or 0):.4f}"
-                elif key in ("tokens", "call_volume"):
+                elif key == "tokens":
                     v = f"{int(v or 0):,}"
                 elif key == "unit_price":
                     up = float(v or 0)

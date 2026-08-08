@@ -1,8 +1,8 @@
 """
 APILedger - 导入冲突确认弹窗
 
-当重复记录 (唯一键匹配) 但数值 (tokens/call_volume/cost) 不一致时,
-弹出对话框列出两次文件的信息, 供用户选择覆盖还是跳过。
+(当前已改为按 key 自动聚合求和, check_conflicts 不再返回冲突,
+ 此对话框保留备用。)
 """
 
 from typing import Any, Dict, List, Optional
@@ -61,7 +61,7 @@ class ConflictDialog(ctk.CTkToplevel):
 
             # 行标题
             title_text = (
-                f"#{idx+1}  [{row.get('bill_start','')} ~ {row.get('bill_end','')}]  "
+                f"#{idx+1}  [{row.get('bill_start','')}]  "
                 f"{row.get('platform','')}/{row.get('project','')}/{row.get('model','')}  "
                 f"类型: {row.get('type','')}"
             )
@@ -93,7 +93,6 @@ class ConflictDialog(ctk.CTkToplevel):
                 numeric_frame,
                 text=(
                     f"Tokens:  {old.get('tokens',0):,} → {int(row.get('tokens',0) or 0):,}   |   "
-                    f"调用量:  {old.get('call_volume',0):,} → {int(row.get('call_volume',0) or 0):,}   |   "
                     f"金额:  ¥{old.get('cost',0):.4f} → ¥{float(row.get('cost',0) or 0):.4f}"
                 ),
                 font=("Consolas", FONT_SIZES["small"]),

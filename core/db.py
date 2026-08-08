@@ -6,7 +6,6 @@ APILedger - SQLite 数据库管理
 
 import os
 import sqlite3
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 # 数据库文件路径 (项目根目录 / data / api_ledger.db)
@@ -19,26 +18,23 @@ CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS api_records (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    bill_start      TEXT NOT NULL,          -- ISO-8601
-    bill_end        TEXT NOT NULL,          -- ISO-8601
+    date            TEXT NOT NULL,           -- 日期 (YYYY-MM-DD)
     platform        TEXT NOT NULL DEFAULT '',
     project         TEXT NOT NULL DEFAULT '',
     model           TEXT NOT NULL DEFAULT '',
     type            TEXT NOT NULL DEFAULT '',
     tokens          INTEGER NOT NULL DEFAULT 0,
-    call_volume     INTEGER NOT NULL DEFAULT 0,
     cost            REAL NOT NULL DEFAULT 0.0,
     unit_price      REAL NOT NULL DEFAULT 0.0,  -- 单价/百万tokens
 
     source_file     TEXT NOT NULL DEFAULT '',
-    imported_at     TEXT NOT NULL DEFAULT '',
 
-    UNIQUE(bill_start, bill_end, platform, project, model, type)
+    UNIQUE(date, platform, project, model, type)
 )
 """
 
 CREATE_INDEXES_SQL = [
-    "CREATE INDEX IF NOT EXISTS idx_dates ON api_records(bill_start, bill_end);",
+    "CREATE INDEX IF NOT EXISTS idx_date ON api_records(date);",
     "CREATE INDEX IF NOT EXISTS idx_platform ON api_records(platform);",
     "CREATE INDEX IF NOT EXISTS idx_project ON api_records(project);",
     "CREATE INDEX IF NOT EXISTS idx_model ON api_records(model);",
@@ -46,17 +42,15 @@ CREATE_INDEXES_SQL = [
 ]
 
 UPSERT_SQL = """
-INSERT INTO api_records (bill_start, bill_end, platform, project, model, type,
-                         tokens, call_volume, cost, unit_price, source_file, imported_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(bill_start, bill_end, platform, project, model, type)
+INSERT INTO api_records (date, platform, project, model, type,
+                         tokens, cost, unit_price, source_file)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(date, platform, project, model, type)
 DO UPDATE SET
-    tokens      = excluded.tokens,
-    call_volume = excluded.call_volume,
-    cost        = excluded.cost,
+    tokens      = api_records.tokens + excluded.tokens,
+    cost        = api_records.cost + excluded.cost,
     unit_price  = excluded.unit_price,
-    source_file = excluded.source_file,
-    imported_at = excluded.imported_at
+    source_file = excluded.source_file
 """
 
 
@@ -78,22 +72,29 @@ class Database:
 
     def _init_tables(self):
         cur = self.conn.cursor()
+        # 检测旧表结构 (旧版含 bill_start / bill_end, 新版用 date)
+        old_cols = [
+            r[1] for r in cur.execute("PRAGMA table_info(api_records)").fetchall()
+        ] if self._table_exists("api_records") else []
+        if old_cols and "date" not in old_cols:
+            print("  [数据库] 检测到旧表结构, 重建为新 schema (date 字段)", flush=True)
+            self._rebuild_table()
+
         cur.execute(CREATE_TABLE_SQL)
-        # 兼容旧表: 添加 unit_price 列 (若不存在)
-        try:
-            cur.execute("ALTER TABLE api_records ADD COLUMN unit_price REAL NOT NULL DEFAULT 0.0;")
-        except Exception:
-            pass  # 列已存在
-        # 迁移旧表: 移除已废弃的 extra 列 (若存在)
-        cols = [r[1] for r in cur.execute("PRAGMA table_info(api_records)").fetchall()]
-        if "extra" in cols:
-            try:
-                cur.execute("ALTER TABLE api_records DROP COLUMN extra;")
-                print("  [数据库] 已移除废弃的 extra 列", flush=True)
-            except Exception:
-                pass  # 旧 SQLite 不支持 DROP COLUMN, 忽略
         for idx_sql in CREATE_INDEXES_SQL:
             cur.execute(idx_sql)
+        self.conn.commit()
+
+    def _table_exists(self, name: str) -> bool:
+        cur = self.conn.cursor()
+        cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,))
+        return cur.fetchone() is not None
+
+    def _rebuild_table(self):
+        """旧表 (bill_start/bill_end) → 新表 (date) 结构重建。
+        数据不迁移 (由重新导入恢复); 仅删除旧表, 避免残留旧 schema。"""
+        cur = self.conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS api_records")
         self.conn.commit()
 
     def close(self):
@@ -109,102 +110,48 @@ class Database:
         self, records: List[Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        两阶段导入的检测阶段：
-        逐行检查这批记录与数据库中已有数据的冲突情况。
+        导入的检测阶段。
+
+        同 key 多条记录由 UPSERT 自动聚合求和 (tokens/cost)，
+        因此不再需要冲突确认——所有记录都归入 new，由 upsert_batch 处理。
 
         返回:
         {
-            "new":  List[Dict],   # 库中没有, 可直接插入
-            "same": List[Dict],   # 数值完全一致, 可跳过
-            "conflicts": [        # 数值不一致, 需要用户确认
-                {
-                    "row":        Dict,  # 本次导入的行
-                    "existing":   Dict,  # 数据库中已有的行
-                    "old_file":   str,   # 已有行的来源文件
-                    "new_file":   str,   # 本次导入的来源文件
-                }
-            ]
+            "new":       List[Dict],  # 全部记录 (UPSERT 会聚合)
+            "same":      [],
+            "conflicts": [],
         }
         """
         if not records:
             return {"new": [], "same": [], "conflicts": []}
 
-        cur = self.conn.cursor()
-        new_rows: List[Dict[str, Any]] = []
-        same_rows: List[Dict[str, Any]] = []
-        conflicts: List[Dict[str, Any]] = []
-
-        for row in records:
-            # 按唯一键查找
-            cur.execute(
-                """SELECT tokens, call_volume, cost, unit_price, source_file
-                   FROM api_records
-                   WHERE bill_start = ? AND bill_end = ?
-                     AND platform = ? AND project = ?
-                     AND model = ? AND type = ?""",
-                (
-                    row.get("bill_start", ""),
-                    row.get("bill_end", ""),
-                    row.get("platform", ""),
-                    row.get("project", ""),
-                    row.get("model", ""),
-                    row.get("type", ""),
-                ),
-            )
-            existing = cur.fetchone()
-
-            if existing is None:
-                new_rows.append(row)
-                continue
-
-            old = dict(existing)
-
-            # 比较数值字段
-            same = (
-                int(row.get("tokens", 0) or 0) == old["tokens"]
-                and int(row.get("call_volume", 0) or 0) == old["call_volume"]
-                and abs(float(row.get("cost", 0.0) or 0.0) - old["cost"]) < 1e-9
-            )
-
-            if same:
-                same_rows.append(row)
-            else:
-                conflicts.append({
-                    "row": row,
-                    "existing": old,
-                    "old_file": old.get("source_file", ""),
-                    "new_file": row.get("source_file", ""),
-                })
-
-        return {"new": new_rows, "same": same_rows, "conflicts": conflicts}
+        return {"new": list(records), "same": [], "conflicts": []}
 
     def upsert_batch(self, records: List[Dict[str, Any]]):
         """
         批量 UPSERT 写入记录。
 
+        同 key 多条记录自动聚合: tokens/cost 求和累加。
+
         records 中每项应包含:
-          bill_start, bill_end, platform, project, model, type,
-          tokens, call_volume, cost, source_file, imported_at
+          bill_start (日期), platform, project, model, type,
+          tokens, cost, source_file
         """
         if not records:
             return 0
 
-        now = datetime.now().isoformat(timespec="seconds")
         rows = []
         for r in records:
             rows.append((
-                r.get("bill_start", ""),
-                r.get("bill_end", ""),
+                str(r.get("bill_start", ""))[:10],
                 r.get("platform", ""),
                 r.get("project", ""),
                 r.get("model", ""),
                 r.get("type", ""),
                 int(r.get("tokens", 0) or 0),
-                int(r.get("call_volume", 0) or 0),
                 float(r.get("cost", 0.0) or 0.0),
                 float(r.get("unit_price", 0.0) or 0.0),
                 r.get("source_file", ""),
-                r.get("imported_at", now),
             ))
 
         cur = self.conn.cursor()
@@ -225,7 +172,7 @@ class Database:
         model: Optional[str] = None,
         type_: Optional[str] = None,
         keyword: Optional[str] = None,
-        order_by: str = "bill_start DESC",
+        order_by: str = "date DESC",
         limit: Optional[int] = None,
         offset: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -234,15 +181,16 @@ class Database:
 
         返回 (records_list, total_count)。
         records_list 中每项为 dict。
+        bill_start/bill_end 参数映射到 date 列 (日期范围筛选)。
         """
         conditions: List[str] = []
         params: List[Any] = []
 
         if bill_start:
-            conditions.append("bill_start >= ?")
+            conditions.append("date >= ?")
             params.append(bill_start)
         if bill_end:
-            conditions.append("bill_end <= ?")
+            conditions.append("date <= ?")
             params.append(bill_end)
         if platform:
             conditions.append("platform = ?")
@@ -281,7 +229,7 @@ class Database:
 
         return rows, total
 
-    def get_all(self, order_by: str = "bill_start DESC") -> List[Dict[str, Any]]:
+    def get_all(self, order_by: str = "date DESC") -> List[Dict[str, Any]]:
         """获取全部记录"""
         cur = self.conn.cursor()
         cur.execute(f"SELECT * FROM api_records ORDER BY {order_by}")
@@ -303,7 +251,7 @@ class Database:
     def get_date_range(self) -> Tuple[Optional[str], Optional[str]]:
         """获取记录中的最早和最晚日期"""
         cur = self.conn.cursor()
-        cur.execute("SELECT MIN(bill_start), MAX(bill_end) FROM api_records")
+        cur.execute("SELECT MIN(date), MAX(date) FROM api_records")
         row = cur.fetchone()
         return (row[0], row[1]) if row else (None, None)
 
@@ -314,12 +262,12 @@ class Database:
     def aggregate_by_date(
         self,
         value_field: str = "cost",
-        group_by: str = "date(bill_start)",
+        group_by: str = "date",
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        按时间聚合。value_field: cost / tokens / call_volume
-        group_by: date(bill_start) 或 strftime('%Y-%m', bill_start)
+        按时间聚合。value_field: cost / tokens
+        group_by: date 或 strftime('%Y-%m', date)
         """
         conditions, params = self._build_filter_conditions(filters)
         where = "WHERE " + " AND ".join(conditions) if conditions else ""
@@ -371,10 +319,10 @@ class Database:
         params: List[Any] = []
         if filters:
             if filters.get("bill_start"):
-                conditions.append("bill_start >= ?")
+                conditions.append("date >= ?")
                 params.append(filters["bill_start"])
             if filters.get("bill_end"):
-                conditions.append("bill_end <= ?")
+                conditions.append("date <= ?")
                 params.append(filters["bill_end"])
             if filters.get("platform"):
                 conditions.append("platform = ?")

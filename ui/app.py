@@ -185,9 +185,9 @@ class _DashboardTab(ctk.CTkFrame):
 
         try:
             if filters:
-                records, _ = self.db.query(order_by="bill_start DESC", **filters)
+                records, _ = self.db.query(order_by="date DESC", **filters)
             else:
-                records = self.db.get_all(order_by="bill_start DESC")
+                records = self.db.get_all(order_by="date DESC")
         except Exception:
             records = []
         self._data = records
@@ -233,7 +233,7 @@ class _DashboardTab(ctk.CTkFrame):
         self.trend_ax.clear()
         daily: Dict[str, float] = {}
         for r in records:
-            d = str(r.get("bill_start", ""))[:10]
+            d = str(r.get("date", ""))[:10]
             if d:
                 daily[d] = daily.get(d, 0.0) + float(r.get("cost", 0.0) or 0.0)
         if daily:
@@ -256,7 +256,7 @@ class _DashboardTab(ctk.CTkFrame):
         recent = records[:20]
         for r in recent:
             self.recent_tree.insert("", "end", values=(
-                str(r.get("bill_start", ""))[:16],
+                str(r.get("date", "")),
                 r.get("platform", ""),
                 r.get("project", ""),
                 r.get("model", ""),

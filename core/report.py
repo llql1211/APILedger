@@ -36,27 +36,25 @@ CHART_COLORS = [
 
 def _build_report_data(db: Database) -> Dict[str, Any]:
     """从数据库提取报告所需的全部数据"""
-    records = db.get_all(order_by="bill_start DESC")
+    records = db.get_all(order_by="date DESC")
 
     summary = {
         "record_count": len(records),
         "total_tokens": sum(int(r.get("tokens", 0) or 0) for r in records),
         "total_cost": round(sum(float(r.get("cost", 0.0) or 0.0) for r in records), 2),
-        "total_calls": sum(int(r.get("call_volume", 0) or 0) for r in records),
         "model_count": len(set(r.get("model", "") for r in records if r.get("model"))),
         "platform_count": len(set(r.get("platform", "") for r in records if r.get("platform"))),
     }
     if records:
-        summary["date_min"] = str(records[-1].get("bill_start", ""))[:10]
-        summary["date_max"] = str(records[0].get("bill_start", ""))[:10]
+        summary["date_min"] = str(records[-1].get("date", ""))[:10]
+        summary["date_max"] = str(records[0].get("date", ""))[:10]
     else:
         summary["date_min"] = summary["date_max"] = ""
 
-    # 按日聚合 (费用/tokens/调用量)
+    # 按日聚合 (费用/tokens)
     daily = {
-        "cost": db.aggregate_by_date(value_field="cost", group_by="date(bill_start)"),
-        "tokens": db.aggregate_by_date(value_field="tokens", group_by="date(bill_start)"),
-        "calls": db.aggregate_by_date(value_field="call_volume", group_by="date(bill_start)"),
+        "cost": db.aggregate_by_date(value_field="cost", group_by="date"),
+        "tokens": db.aggregate_by_date(value_field="tokens", group_by="date"),
     }
 
     # 各维度 Top-N
@@ -68,14 +66,12 @@ def _build_report_data(db: Database) -> Dict[str, Any]:
     raw_records = []
     for r in records:
         raw_records.append({
-            "bill_start": r.get("bill_start", ""),
-            "bill_end": r.get("bill_end", ""),
+            "bill_start": r.get("date", "") or r.get("bill_start", ""),
             "platform": r.get("platform", ""),
             "project": r.get("project", ""),
             "model": r.get("model", ""),
             "type": r.get("type", ""),
             "tokens": int(r.get("tokens", 0) or 0),
-            "call_volume": int(r.get("call_volume", 0) or 0),
             "cost": float(r.get("cost", 0.0) or 0.0),
             "unit_price": float(r.get("unit_price", 0.0) or 0.0),
             "source_file": r.get("source_file", ""),
@@ -197,7 +193,6 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
   <div class="cards">
     <div class="card"><div class="label">总费用</div><div class="value cost" id="c-cost">-</div></div>
     <div class="card"><div class="label">总 Tokens</div><div class="value tokens" id="c-tokens">-</div></div>
-    <div class="card"><div class="label">调用量</div><div class="value" id="c-calls">-</div></div>
     <div class="card"><div class="label">记录数</div><div class="value" id="c-records">-</div></div>
     <div class="card"><div class="label">模型数</div><div class="value" id="c-models">-</div></div>
   </div>
@@ -285,7 +280,6 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     const s = DATA.summary;
     document.getElementById('c-cost').textContent = fmtCost(s.total_cost);
     document.getElementById('c-tokens').textContent = fmtNum(s.total_tokens);
-    document.getElementById('c-calls').textContent = fmtNum(s.total_calls);
     document.getElementById('c-records').textContent = fmtNum(s.record_count);
     document.getElementById('c-models').textContent = fmtNum(s.model_count);
     document.getElementById('subtitle').textContent =

@@ -220,7 +220,7 @@ def match_type_by_price(
     已精确区分的 type 不再修改。
     """
     typ = entry.get("type", "")
-    if typ in ("输入(缓存命中)", "输入(缓存未命中)", "输出", "调用量"):
+    if typ in ("输入", "输出", "缓存输入"):
         return None  # 已精确区分
 
     up = entry.get("unit_price", 0.0)

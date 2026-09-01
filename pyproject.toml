@@ -18,3 +18,6 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["core*", "ui*"]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]

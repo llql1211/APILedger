@@ -28,7 +28,7 @@ DISPLAY_COLUMNS = [
 COL_KEYS = [c[0] for c in DISPLAY_COLUMNS]
 COL_LABELS = [c[1] for c in DISPLAY_COLUMNS]
 
-# 列宽 (px)
+# 列宽基准 (px): 作为窗口宽度分配的比例权重
 COL_WIDTHS = {
     "date":         110,
     "platform":    100,
@@ -41,6 +41,19 @@ COL_WIDTHS = {
     "source_file": 150,
 }
 
+# 列最小宽度 (px): 窗口缩窄时的下限
+COL_MINWIDTHS = {
+    "date":         85,
+    "platform":     70,
+    "project":      70,
+    "model":       100,
+    "type":         55,
+    "tokens":       65,
+    "cost":         65,
+    "unit_price":   60,
+    "source_file":  80,
+}
+
 
 class TablePanel(ctk.CTkFrame):
     """数据表格面板"""
@@ -49,6 +62,7 @@ class TablePanel(ctk.CTkFrame):
         super().__init__(master, **kwargs)
         self.db = db
         self._data: List[Dict[str, Any]] = []
+        self._last_tree_width = 0
 
         # ── 顶部统计栏 ──────────────────────
         self.stats_label = ctk.CTkLabel(
@@ -74,26 +88,51 @@ class TablePanel(ctk.CTkFrame):
             style=self._tree_style_name,
         )
 
-        # 设置列
+        # 设置列 (宽度随容器尺寸按 COL_WIDTHS 比例自适应)
         for key, label in DISPLAY_COLUMNS:
-            width = COL_WIDTHS.get(key, 120)
             self.tree.heading(key, text=label, command=lambda k=key: self._sort_by(k))
-            self.tree.column(key, width=width, minwidth=80, anchor="e" if key in ("tokens", "cost") else "w")
+            self.tree.column(
+                key,
+                width=COL_WIDTHS.get(key, 120),
+                minwidth=COL_MINWIDTHS.get(key, 60),
+                stretch=False,
+                anchor="e" if key in ("tokens", "cost") else "w",
+            )
+        self.tree.bind("<Configure>", self._on_tree_configure)
 
-        # 滚动条
+        # 滚动条 (列宽自适应容器宽度, 无需横向滚动)
         v_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        h_scroll = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+        self.tree.configure(yscrollcommand=v_scroll.set)
 
         self.tree.grid(row=0, column=0, sticky="nsew")
         v_scroll.grid(row=0, column=1, sticky="ns")
-        h_scroll.grid(row=1, column=0, sticky="ew")
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
         # ── Treeview 样式 ──────────────────
         # 样式统一由 ui.theme.configure_ttk_tree_style() 管理,
         # 主题切换时通过更新同名 style 自动生效。
+
+    def _on_tree_configure(self, event):
+        """容器尺寸变化时按比例重分配列宽 (阈值防抖, 避免事件循环)"""
+        if event.widget is not self.tree:
+            return
+        width = self.tree.winfo_width()
+        if width <= 1 or abs(width - self._last_tree_width) < 5:
+            return
+        self._last_tree_width = width
+        total_base = sum(COL_WIDTHS.values())
+        assigned = 0
+        for key in COL_KEYS:
+            w = max(COL_MINWIDTHS.get(key, 60), round(width * COL_WIDTHS[key] / total_base))
+            self.tree.column(key, width=w)
+            assigned += w
+        # 取整误差由最宽列吸收, 保证总宽恰好填满容器
+        widest = max(COL_KEYS, key=lambda k: self.tree.column(k, "width"))
+        self.tree.column(widest, width=max(COL_MINWIDTHS.get(widest, 60),
+                                           self.tree.column(widest, "width") + width - assigned))
 
     def refresh(self, filters: Dict[str, Any] = None):
         """从数据库加载数据并刷新表格"""

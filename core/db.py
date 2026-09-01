@@ -1,10 +1,19 @@
 """
 APILedger - SQLite 数据库管理
 
-提供: 建表、UPSERT 批量写入、筛选查询、去重取值。
+提供: 建表、贡献明细 + 聚合写入、冲突检测、筛选查询、去重取值。
+
+数据模型:
+  api_records     聚合表, 每 key (date, platform, project, model, type) 一行,
+                  tokens/cost 为各来源文件贡献之和
+  record_sources  贡献明细表, 每 (key, source_file) 一行, 记录每个账单文件
+                  对该 key 的贡献。同 key 跨文件时:
+                    - 文件名时间区段不重叠 → 互补数据, 贡献累加
+                    - 文件名时间区段重叠   → 重复数据, 视为冲突交用户裁决
 """
 
 import os
+import re
 import sqlite3
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,7 +50,36 @@ CREATE_INDEXES_SQL = [
     "CREATE INDEX IF NOT EXISTS idx_type ON api_records(type);",
 ]
 
-UPSERT_SQL = """
+# 贡献明细表: 每个账单文件对每个 key 的贡献
+CREATE_SOURCES_SQL = """
+CREATE TABLE IF NOT EXISTS record_sources (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL,
+    platform    TEXT NOT NULL DEFAULT '',
+    project     TEXT NOT NULL DEFAULT '',
+    model       TEXT NOT NULL DEFAULT '',
+    type        TEXT NOT NULL DEFAULT '',
+    source_file TEXT NOT NULL DEFAULT '',
+    tokens      INTEGER NOT NULL DEFAULT 0,
+    cost        REAL NOT NULL DEFAULT 0.0,
+    unit_price  REAL NOT NULL DEFAULT 0.0,
+
+    UNIQUE(date, platform, project, model, type, source_file)
+)
+"""
+
+UPSERT_SOURCE_SQL = """
+INSERT INTO record_sources (date, platform, project, model, type, source_file,
+                            tokens, cost, unit_price)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(date, platform, project, model, type, source_file)
+DO UPDATE SET
+    tokens      = excluded.tokens,
+    cost        = excluded.cost,
+    unit_price  = excluded.unit_price
+"""
+
+UPSERT_AGGREGATE_SQL = """
 INSERT INTO api_records (date, platform, project, model, type,
                          tokens, cost, unit_price, source_file)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -52,6 +90,32 @@ DO UPDATE SET
     unit_price  = excluded.unit_price,
     source_file = excluded.source_file
 """
+
+# 从文件名提取日期 (如 paratera_2026-08-01_2026-08-31.csv → 两个日期)
+_DATE_IN_FILENAME_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def parse_file_date_range(filename: str) -> Optional[Tuple[str, str]]:
+    """
+    从文件名解析时间区段 (起, 止)。
+    无日期或仅一个日期时, 区段为 (d, d); 完全无日期返回 None。
+    """
+    dates = _DATE_IN_FILENAME_RE.findall(os.path.basename(filename))
+    if not dates:
+        return None
+    return (min(dates), max(dates))
+
+
+def ranges_overlap(
+    a: Optional[Tuple[str, str]], b: Optional[Tuple[str, str]]
+) -> bool:
+    """
+    判断两个文件名时间区段是否重叠。
+    任一区段未知 (None) 时保守视为重叠 (走冲突流程, 交用户裁决)。
+    """
+    if a is None or b is None:
+        return True
+    return a[0] <= b[1] and b[0] <= a[1]
 
 
 class Database:
@@ -83,6 +147,23 @@ class Database:
         cur.execute(CREATE_TABLE_SQL)
         for idx_sql in CREATE_INDEXES_SQL:
             cur.execute(idx_sql)
+        cur.execute(CREATE_SOURCES_SQL)
+
+        # 旧库迁移: api_records 已有数据但无贡献明细时, 整表回填
+        # (每行视为其 source_file 的一次贡献, 数值不变)
+        src_cnt = cur.execute("SELECT COUNT(*) FROM record_sources").fetchone()[0]
+        rec_cnt = cur.execute("SELECT COUNT(*) FROM api_records").fetchone()[0]
+        if rec_cnt > 0 and src_cnt == 0:
+            print("  [数据库] 迁移: 按 api_records 回填来源明细 (record_sources)", flush=True)
+            cur.execute(
+                """INSERT INTO record_sources
+                     (date, platform, project, model, type, source_file,
+                      tokens, cost, unit_price)
+                   SELECT date, platform, project, model, type, source_file,
+                          tokens, cost, unit_price
+                   FROM api_records"""
+            )
+
         self.conn.commit()
 
     def _table_exists(self, name: str) -> bool:
@@ -113,74 +194,111 @@ class Database:
         两阶段导入的检测阶段：
         逐行检查这批记录与数据库中已有数据的冲突情况。
 
+        判定规则 (按 key = date/platform/project/model/type 查贡献明细):
+          - key 不存在                          → new (新增)
+          - 同文件已有贡献, 数值一致             → same (无变化)
+          - 同文件已有贡献, 数值不一致           → conflict (同文件数据变动)
+          - 其他文件的贡献, 文件名区段不重叠     → merge (互补数据, 累加)
+          - 其他文件的贡献, 文件名区段重叠       → conflict (重复数据)
+
         返回:
         {
-            "new":  List[Dict],   # 库中没有, 可直接插入
-            "same": List[Dict],   # 数值完全一致, 可跳过
-            "conflicts": [        # 数值不一致, 需要用户确认
+            "new":    List[Dict],   # 库中没有, 可直接插入
+            "same":   List[Dict],   # 数值完全一致, 可跳过
+            "merges": List[Dict],   # 互补数据, 贡献累加
+            "conflicts": [          # 数值不一致, 需要用户确认
                 {
                     "row":        Dict,  # 本次导入的行
-                    "existing":   Dict,  # 数据库中已有的行
-                    "old_file":   str,   # 已有行的来源文件
+                    "existing":   Dict,  # 数据库中已有的聚合行
+                    "old_file":   str,   # 已有数据的来源文件
                     "new_file":   str,   # 本次导入的来源文件
                 }
             ]
         }
         """
         if not records:
-            return {"new": [], "same": [], "conflicts": []}
+            return {"new": [], "same": [], "merges": [], "conflicts": []}
 
         cur = self.conn.cursor()
         new_rows: List[Dict[str, Any]] = []
         same_rows: List[Dict[str, Any]] = []
+        merge_rows: List[Dict[str, Any]] = []
         conflicts: List[Dict[str, Any]] = []
 
         for row in records:
-            # 按唯一键查找
+            key = _record_key(row)
             cur.execute(
-                """SELECT tokens, cost, unit_price, source_file
-                   FROM api_records
+                """SELECT source_file, tokens, cost FROM record_sources
                    WHERE date = ? AND platform = ? AND project = ?
                      AND model = ? AND type = ?""",
-                (
-                    row.get("bill_start", ""),
-                    row.get("platform", ""),
-                    row.get("project", ""),
-                    row.get("model", ""),
-                    row.get("type", ""),
-                ),
+                key,
             )
-            existing = cur.fetchone()
+            contributions = cur.fetchall()
 
-            if existing is None:
+            if not contributions:
                 new_rows.append(row)
                 continue
 
-            old = dict(existing)
+            tokens = int(row.get("tokens", 0) or 0)
+            cost = float(row.get("cost", 0.0) or 0.0)
+            src = row.get("source_file", "")
 
-            # 数值一致 → 跳过
-            same = (
-                int(row.get("tokens", 0) or 0) == old["tokens"]
-                and abs(float(row.get("cost", 0.0) or 0.0) - old["cost"]) < 1e-9
+            # 同一文件再次导入: 比对该文件的贡献值
+            mine = [c for c in contributions if c["source_file"] == src]
+            if mine:
+                if mine[0]["tokens"] == tokens and abs(mine[0]["cost"] - cost) < 1e-9:
+                    same_rows.append(row)
+                else:
+                    conflicts.append(self._conflict_entry(cur, row, key))
+                continue
+
+            # 其他文件的贡献: 按文件名时间区段判断互补 / 重复
+            new_range = parse_file_date_range(src)
+            overlap = any(
+                ranges_overlap(new_range, parse_file_date_range(c["source_file"]))
+                for c in contributions
             )
-
-            if same:
-                same_rows.append(row)
+            if overlap:
+                conflicts.append(self._conflict_entry(cur, row, key))
             else:
-                conflicts.append({
-                    "row": row,
-                    "existing": old,
-                    "old_file": old.get("source_file", ""),
-                    "new_file": row.get("source_file", ""),
-                })
+                merge_rows.append(row)
 
-        return {"new": new_rows, "same": same_rows, "conflicts": conflicts}
+        return {
+            "new": new_rows,
+            "same": same_rows,
+            "merges": merge_rows,
+            "conflicts": conflicts,
+        }
+
+    def _conflict_entry(
+        self, cur: sqlite3.Cursor, row: Dict[str, Any], key: tuple
+    ) -> Dict[str, Any]:
+        """构造冲突条目, existing 取聚合行供 UI 展示"""
+        cur.execute(
+            """SELECT tokens, cost, unit_price, source_file
+               FROM api_records
+               WHERE date = ? AND platform = ? AND project = ?
+                 AND model = ? AND type = ?""",
+            key,
+        )
+        existing = cur.fetchone()
+        old = dict(existing) if existing else {
+            "tokens": 0, "cost": 0.0, "unit_price": 0.0, "source_file": "",
+        }
+        return {
+            "row": row,
+            "existing": old,
+            "old_file": old.get("source_file", ""),
+            "new_file": row.get("source_file", ""),
+        }
 
     def upsert_batch(self, records: List[Dict[str, Any]]):
         """
-        批量 UPSERT 写入记录。
+        批量写入记录 (贡献累加)。
 
-        同 key 多条记录自动聚合: tokens/cost 求和累加。
+        每条记录作为其 source_file 对该 key 的一次贡献写入 record_sources,
+        然后重算该 key 的聚合行 (tokens/cost = 各贡献之和)。
+        同 key 跨文件多次导入自动累加; 同文件重复导入以最新值替换其贡献。
 
         records 中每项应包含:
           bill_start (日期), platform, project, model, type,
@@ -189,24 +307,71 @@ class Database:
         if not records:
             return 0
 
-        rows = []
+        cur = self.conn.cursor()
         for r in records:
-            rows.append((
-                str(r.get("bill_start", ""))[:10],
-                r.get("platform", ""),
-                r.get("project", ""),
-                r.get("model", ""),
-                r.get("type", ""),
+            key = _record_key(r)
+            cur.execute(UPSERT_SOURCE_SQL, key + (
+                r.get("source_file", ""),
                 int(r.get("tokens", 0) or 0),
                 float(r.get("cost", 0.0) or 0.0),
                 float(r.get("unit_price", 0.0) or 0.0),
-                r.get("source_file", ""),
             ))
+            self._refresh_aggregate(cur, key)
+
+        self.conn.commit()
+        return len(records)
+
+    def replace_keys_batch(self, records: List[Dict[str, Any]]):
+        """
+        强制覆盖: 清空这些 key 的全部贡献明细, 以本次记录为准重建。
+        用于用户确认覆盖的冲突行 (重复数据语义)。
+        """
+        if not records:
+            return 0
 
         cur = self.conn.cursor()
-        cur.executemany(UPSERT_SQL, rows)
+        for r in records:
+            key = _record_key(r)
+            cur.execute(
+                """DELETE FROM record_sources
+                   WHERE date = ? AND platform = ? AND project = ?
+                     AND model = ? AND type = ?""",
+                key,
+            )
+            cur.execute(UPSERT_SOURCE_SQL, key + (
+                r.get("source_file", ""),
+                int(r.get("tokens", 0) or 0),
+                float(r.get("cost", 0.0) or 0.0),
+                float(r.get("unit_price", 0.0) or 0.0),
+            ))
+            self._refresh_aggregate(cur, key)
+
         self.conn.commit()
-        return len(rows)
+        return len(records)
+
+    def _refresh_aggregate(self, cur: sqlite3.Cursor, key: tuple):
+        """按贡献明细重算某 key 的聚合行"""
+        cur.execute(
+            """SELECT SUM(tokens), SUM(cost), MAX(unit_price),
+                      GROUP_CONCAT(DISTINCT source_file)
+               FROM record_sources
+               WHERE date = ? AND platform = ? AND project = ?
+                 AND model = ? AND type = ?""",
+            key,
+        )
+        total_tokens, total_cost, max_price, files = cur.fetchone()
+        total_tokens = int(total_tokens or 0)
+        total_cost = float(total_cost or 0.0)
+
+        # 单价: 有 tokens 时按总量重算, 否则沿用贡献中的单价
+        if total_tokens > 0:
+            unit_price = round(total_cost * 1_000_000 / total_tokens, 4)
+        else:
+            unit_price = float(max_price or 0.0)
+
+        cur.execute(UPSERT_AGGREGATE_SQL, key + (
+            total_tokens, total_cost, unit_price, files or "",
+        ))
 
     # ═══════════════════════════════════════════════
     # 查询
@@ -386,3 +551,14 @@ class Database:
                 conditions.append("type = ?")
                 params.append(filters["type_"])
         return conditions, params
+
+
+def _record_key(row: Dict[str, Any]) -> tuple:
+    """从标准记录提取唯一键 (date, platform, project, model, type)"""
+    return (
+        str(row.get("bill_start", ""))[:10],
+        row.get("platform", ""),
+        row.get("project", ""),
+        row.get("model", ""),
+        row.get("type", ""),
+    )

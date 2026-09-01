@@ -396,15 +396,17 @@ def process_single_file(
     单文件两阶段导入:
 
     第一阶段 (检测):
-      解析文件 → check_conflicts → 分出 new / same / conflicts
+      解析文件 → check_conflicts → 分出 new / same / merges / conflicts
+      (merges 为文件名时间区段不重叠的互补数据, 自动累加, 无需确认)
 
     第二阶段 (执行):
-      由调用方决定如何处理 conflicts, 然后调用 db.upsert_batch() 写入。
+      由调用方决定如何处理 conflicts, 然后调用 commit_import() 写入。
 
     返回:
     {
         "filename": str,
         "new_count": int,
+        "merge_count": int,
         "same_count": int,
         "conflicts": List[conflict],
     }
@@ -415,9 +417,13 @@ def process_single_file(
     records = parse_records_from_file(filepath)
     if not records:
         archive_file(filepath)
-        return {"filename": filename, "new_count": 0, "same_count": 0, "conflicts": []}
+        return {
+            "filename": filename,
+            "new_count": 0, "merge_count": 0, "same_count": 0,
+            "conflicts": [],
+        }
 
-    # 检测冲突
+    # 检测冲突 / 互补合并
     result = db.check_conflicts(records)
     conflicts: List = result.get("conflicts", [])
 
@@ -428,9 +434,11 @@ def process_single_file(
     return {
         "filename": filename,
         "new_count": len(result["new"]),
+        "merge_count": len(result.get("merges", [])),
         "same_count": len(result["same"]),
         "conflicts": conflicts,
         "_new_records": result["new"],
+        "_merge_records": result.get("merges", []),
         "_same_records": result["same"],
     }
 
@@ -443,20 +451,22 @@ def commit_import(
 ) -> int:
     """
     第二阶段执行：确认导入。
-    写入 new + (若 force_overwrite_conflicts 则含 conflicts 中的行)，
-    然后归档文件。
+    写入 new + merges (互补数据累加); 若 force_overwrite_conflicts 则
+    将冲突行强制覆盖 (清空该 key 已有贡献, 以本次为准)。最后归档文件。
 
     返回实际写入行数。
     """
     to_write: List[Dict[str, Any]] = list(file_result.get("_new_records", []))
-
-    if force_overwrite_conflicts:
-        for c in file_result.get("conflicts", []):
-            to_write.append(c["row"])
+    to_write += file_result.get("_merge_records", [])
 
     written = 0
     if to_write:
         written = db.upsert_batch(to_write)
+
+    if force_overwrite_conflicts:
+        conflict_rows = [c["row"] for c in file_result.get("conflicts", [])]
+        if conflict_rows:
+            written += db.replace_keys_batch(conflict_rows)
 
     # 归档
     archive_file(filepath)

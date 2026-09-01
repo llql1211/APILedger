@@ -505,6 +505,7 @@ class App(ctk.CTk):
     def _handle_import_results(self, results: list, any_conflict: bool):
         """在主线程中处理导入结果"""
         total_new = 0
+        total_merge = 0
         total_same = 0
         total_conflicts = 0
         error_files = []
@@ -515,12 +516,13 @@ class App(ctk.CTk):
                 continue
 
             total_new += res.get("new_count", 0)
+            total_merge += res.get("merge_count", 0)
             total_same += res.get("same_count", 0)
             conflicts = res.get("conflicts", [])
             total_conflicts += len(conflicts)
 
         # 全部文件解析失败
-        if error_files and total_new == 0 and total_same == 0 and total_conflicts == 0:
+        if error_files and total_new == 0 and total_merge == 0 and total_same == 0 and total_conflicts == 0:
             err_str = "; ".join(error_files[:3])
             if len(error_files) > 3:
                 err_str += f" ... 等共 {len(error_files)} 个"
@@ -568,6 +570,8 @@ class App(ctk.CTk):
         msg_parts = []
         if total_new > 0:
             msg_parts.append(f"新增/更新 {total_new} 条")
+        if total_merge > 0:
+            msg_parts.append(f"互补合并 {total_merge} 条")
         if total_same > 0:
             msg_parts.append(f"{total_same} 条无变化已跳过")
         if total_conflicts > 0:

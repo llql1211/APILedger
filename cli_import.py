@@ -54,6 +54,7 @@ def main():
 
     try:
         total_new = 0
+        total_merge = 0
         total_same = 0
         total_conflicts = 0
         total_errors = 0
@@ -74,14 +75,17 @@ def main():
                 continue
 
             n_new = res.get("new_count", 0)
+            n_merge = res.get("merge_count", 0)
             n_same = res.get("same_count", 0)
             n_conflicts = len(res.get("conflicts", []))
 
-            print(f"  检测结果: 新增 {n_new} 条, 无变化 {n_same} 条, 冲突 {n_conflicts} 条")
+            merge_msg = f", 互补合并 {n_merge} 条" if n_merge else ""
+            print(f"  检测结果: 新增 {n_new} 条{merge_msg}, 无变化 {n_same} 条, 冲突 {n_conflicts} 条")
 
             if args.dry_run:
                 print(f"  (dry-run 模式，跳过写入和归档)\n")
                 total_new += n_new
+                total_merge += n_merge
                 total_same += n_same
                 total_conflicts += n_conflicts
                 continue
@@ -99,6 +103,7 @@ def main():
 
             print(f"  已写入 {written} 条，文件已归档\n")
             total_new += n_new
+            total_merge += n_merge
             total_same += n_same
             total_conflicts += n_conflicts
 
@@ -107,6 +112,8 @@ def main():
         parts = []
         if total_new > 0:
             parts.append(f"新增/更新 {total_new} 条")
+        if total_merge > 0:
+            parts.append(f"互补合并 {total_merge} 条")
         if total_same > 0:
             parts.append(f"{total_same} 条无变化已跳过")
         if total_conflicts > 0:

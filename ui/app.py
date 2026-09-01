@@ -6,6 +6,7 @@ APILedger - CustomTkinter 主窗口
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import webbrowser
 from datetime import datetime
@@ -273,6 +274,11 @@ class App(ctk.CTk):
         self.db = db
         self._current_filters: Dict[str, Any] = {}
 
+        # 后台线程 → 主线程的事件队列 (tkinter 非线程安全, 工作线程禁止直接碰 UI)
+        self._bg_queue: "queue.Queue" = queue.Queue()
+        self._bg_threads: list = []
+        self._bg_poll_scheduled = False
+
         # ── 窗口配置 ─────────────────────────
         setup_appearance()
         self.title("APILedger - API账单管理")
@@ -433,18 +439,50 @@ class App(ctk.CTk):
         self.status_bar.configure(text="正在生成报告...")
 
         # 后台线程生成 (echarts 首次下载可能耗时)
-        t = threading.Thread(target=self._run_export_thread, args=(filepath,), daemon=True)
+        self._start_bg_thread(self._run_export_thread, filepath)
+
+    def _start_bg_thread(self, target, *args):
+        """启动后台线程并确保主线程在轮询事件队列"""
+        t = threading.Thread(target=target, args=args, daemon=True)
         t.start()
+        self._bg_threads.append(t)
+        if not self._bg_poll_scheduled:
+            self._bg_poll_scheduled = True
+            self.after(100, self._poll_bg_events)
+
+    def _poll_bg_events(self):
+        """主线程轮询: 执行工作线程投递的 UI 更新"""
+        try:
+            while True:
+                func, args = self._bg_queue.get_nowait()
+                try:
+                    func(*args)
+                except Exception as e:
+                    # 单个事件失败不中断轮询, 并确保导入/导出按钮恢复可用
+                    self._recover_after_bg_error(str(e))
+        except queue.Empty:
+            pass
+        self._bg_threads = [t for t in self._bg_threads if t.is_alive()]
+        if self._bg_threads or not self._bg_queue.empty():
+            self.after(100, self._poll_bg_events)
+        else:
+            self._bg_poll_scheduled = False
+
+    def _recover_after_bg_error(self, err: str):
+        """后台流程异常兜底: 恢复按钮并提示错误"""
+        self.import_btn.configure(state="normal", text="📥 导入账单")
+        self.export_btn.configure(state="normal", text="📊 导出报告")
+        self.import_status.configure(text=f"失败: {err}", text_color="#c0392b")
 
     def _run_export_thread(self, filepath: str):
-        """后台线程: 生成 HTML 报告并写入文件"""
+        """后台线程: 生成 HTML 报告并写入文件 (结果经队列回主线程)"""
         try:
             html = build_html(self.db)
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(html)
-            self.after(0, self._finish_export, filepath, None)
+            self._bg_queue.put((self._finish_export, (filepath, None)))
         except Exception as e:
-            self.after(0, self._finish_export, None, str(e))
+            self._bg_queue.put((self._finish_export, (None, str(e))))
 
     def _finish_export(self, filepath: str, error: str | None):
         """导出结束: 恢复按钮并显示结果"""
@@ -462,6 +500,11 @@ class App(ctk.CTk):
     # 导入流程
     # ═══════════════════════════════════════════════
 
+    @staticmethod
+    def _default_text_color():
+        """CTkLabel 的主题默认文字色 (随明暗模式); 空字符串是非法颜色会抛 TclError"""
+        return ctk.ThemeManager.theme["CTkLabel"]["text_color"]
+
     def _on_import_clicked(self):
         """点击导入按钮"""
         os.makedirs(INPUT_DIR, exist_ok=True)
@@ -472,23 +515,27 @@ class App(ctk.CTk):
             return
 
         self.import_btn.configure(state="disabled", text="⏳ 导入中...")
-        self.import_status.configure(text=f"处理 {len(files)} 个文件...", text_color="")
+        self.import_status.configure(text=f"处理 {len(files)} 个文件...",
+                                     text_color=self._default_text_color())
 
         # 后台线程执行导入 (避免 UI 卡顿)
-        t = threading.Thread(target=self._run_import_thread, args=(files,), daemon=True)
-        t.start()
+        self._start_bg_thread(self._run_import_thread, files)
 
     def _run_import_thread(self, files: list):
-        """后台线程: 逐文件检测 → 有冲突弹窗 → 写入 → 归档"""
+        """后台线程: 逐文件检测 → 经队列回主线程弹窗确认 → 写入 → 归档"""
         results: list = []
         any_conflict = False
 
         total = len(files)
         for i, fpath in enumerate(files):
-            # 推送进度到状态栏
+            # 推送进度到状态栏 (经队列, 不在子线程碰 UI)
             fname = os.path.basename(fpath)
-            self.after(0, lambda n=fname, idx=i, t=total: self.import_status.configure(
-                text=f"处理中 ({idx+1}/{t}): {n}", text_color=""
+            self._bg_queue.put((
+                lambda n=fname, idx=i, t=total: self.import_status.configure(
+                    text=f"处理中 ({idx+1}/{t}): {n}",
+                    text_color=self._default_text_color(),
+                ),
+                (),
             ))
 
             try:
@@ -500,7 +547,7 @@ class App(ctk.CTk):
                 results.append((fpath, {"filename": os.path.basename(fpath), "error": str(e)}))
 
         # 在主线程处理冲突和写入
-        self.after(0, self._handle_import_results, results, any_conflict)
+        self._bg_queue.put((self._handle_import_results, (results, any_conflict)))
 
     def _handle_import_results(self, results: list, any_conflict: bool):
         """在主线程中处理导入结果"""

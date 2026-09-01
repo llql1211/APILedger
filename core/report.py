@@ -314,7 +314,14 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
 
     trendChart.setOption({
-      tooltip: { trigger: 'axis' },
+      tooltip: {
+        trigger: 'axis',
+        formatter: params => {
+          let s = params[0].axisValue;
+          for (const p of params) s += '<br>' + p.marker + ' ' + fmtCost(p.value);
+          return s;
+        },
+      },
       grid: { left: 60, right: 20, top: 30, bottom: 40 },
       xAxis: { type: 'category', data: keys, axisLabel: { rotate: 45, fontSize: 10 } },
       yAxis: { type: 'value', name: '费用(¥)' },
@@ -335,7 +342,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     if (!platformChart) platformChart = echarts.init(el);
     const data = (DATA.by_platform || []).map(d => ({ name: d.name || '(空)', value: Number(d.total) }));
     platformChart.setOption({
-      tooltip: { trigger: 'item', formatter: '{b}: ¥{c} ({d}%)' },
+      tooltip: { trigger: 'item', formatter: p => `${p.name}: ${fmtCost(p.value)} (${p.percent}%)` },
       legend: { bottom: 0, type: 'scroll' },
       series: [{ type: 'pie', radius: ['35%', '65%'], data, label: { formatter: '{b}\\n{d}%', fontSize: 11 }, color: CHART_COLORS }],
     });
@@ -351,7 +358,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     const names = [...data].reverse().map(d => d.name || '(空)');
     const vals = [...data].reverse().map(d => Number(d.total));
     modelChart.setOption({
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => p[0].name + '<br>¥' + fmtNum(p[0].value) },
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => p[0].name + '<br>' + fmtCost(p[0].value) },
       grid: { left: 120, right: 40, top: 20, bottom: 30 },
       xAxis: { type: 'value', name: '费用(¥)' },
       yAxis: { type: 'category', data: names },
@@ -367,7 +374,7 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
     if (!typeChart) typeChart = echarts.init(el);
     const data = (DATA.by_type || []).map(d => ({ name: d.name || '(空)', value: Number(d.total) }));
     typeChart.setOption({
-      tooltip: { trigger: 'item', formatter: '{b}: ¥{c} ({d}%)' },
+      tooltip: { trigger: 'item', formatter: p => `${p.name}: ${fmtCost(p.value)} (${p.percent}%)` },
       legend: { bottom: 0, type: 'scroll' },
       series: [{ type: 'pie', data, label: { formatter: '{b}\\n{d}%', fontSize: 11 }, color: CHART_COLORS }],
     });

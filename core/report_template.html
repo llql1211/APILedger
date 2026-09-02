@@ -121,7 +121,7 @@
       <div id="chart-model" class="chart"></div>
     </div>
     <div class="chart-box">
-      <h3>模型 token 构成对比 <span class="hint">(每行 100%, 平台×模型)</span></h3>
+      <h3>模型 token 构成对比 <span class="hint">(每行 100% · 平台×模型 · 右侧为每 1M token 均价)</span></h3>
       <div class="chart-tabs" id="tabs-stack">
         <button data-m="tokens" class="active">Token 类型</button>
         <button data-m="cost">费用</button>
@@ -477,9 +477,27 @@
 
     const bucketMap = metric === 'cost' ? 'cost' : 'tokens';
     const totalOf = g => metric === 'cost' ? g.costTotal : g.tokenTotal;
+    // 均价: 总费用 / 总 tokens × 1e6, 元每 1M tokens (与分段指标无关, 恒为费用口径)
+    const avgRateText = g => {
+      if (!g.tokenTotal) return '';
+      const rate = g.costTotal * 1e6 / g.tokenTotal;
+      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '/M';
+    };
+    // 行内最顶端的非零段右侧显示均价标签 (只在该段处标注一次)
+    const labelFor = (bucketIdx) => ({
+      show: true, position: 'right', fontSize: 11, color: '#6b7280',
+      formatter: p => {
+        const g = groups[groups.length - 1 - p.dataIndex];
+        if (!g) return '';
+        const vals = TYPE_BUCKETS.map(b => g[bucketMap].get(b.key) || 0);
+        let topIdx = -1;
+        for (let i = 0; i < vals.length; i++) if (vals[i] > 0) topIdx = i;
+        return topIdx === bucketIdx ? avgRateText(g) : '';
+      },
+    });
 
     // 三段百分比堆叠 (每行合计 100)
-    const series = TYPE_BUCKETS.map(b => ({
+    const series = TYPE_BUCKETS.map((b, i) => ({
       name: b.key, type: 'bar', stack: 'total', barMaxWidth: 22,
       data: groups.map(g => {
         const v = g[bucketMap].get(b.key) || 0;
@@ -487,6 +505,7 @@
         return total ? +(v * 100 / total).toFixed(2) : 0;
       }).reverse(),
       itemStyle: { color: b.color },
+      label: labelFor(i),
     }));
     const labels = groups.map(g => g.label).reverse();
 
@@ -501,11 +520,14 @@
             const abs = g ? (g[bucketMap].get(p.seriesName) || 0) : 0;
             s += '<br>' + p.marker + ' ' + p.seriesName + ': ' + fmtMetric(abs, metric) + ' (' + p.value + '%)';
           }
-          return s;
+          // 末尾追加整行均价
+          const g = groups[groups.length - 1 - params[0].dataIndex];
+          const avg = g ? avgRateText(g) : '';
+          return s + (avg ? '<br><span style="color:#6b7280">均价: ' + avg + '</span>' : '');
         },
       },
       legend: { bottom: 0 },
-      grid: { left: 130, right: 30, top: 20, bottom: 40 },
+      grid: { left: 130, right: 120, top: 20, bottom: 40 },
       xAxis: { type: 'value', max: 100, axisLabel: { formatter: '{value}%', fontSize: 10 } },
       yAxis: { type: 'category', data: labels, axisLabel: { fontSize: 10 } },
       series,

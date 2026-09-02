@@ -37,6 +37,8 @@
   .filter-item input[type="date"] { width: 150px; }
   .filter-item input[type="text"] { width: 200px; }
   .filter-actions { display: flex; gap: 8px; }
+  .preset { padding: 6px 10px; border: 1px solid var(--border); background: #fff; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .preset:hover { border-color: var(--primary); color: var(--primary); }
   .btn { padding: 6px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: var(--primary); color: #fff; }
   .btn.secondary { background: #e5e7eb; color: #374151; }
   .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
@@ -61,6 +63,30 @@
 <body>
   <h1>📊 APILedger 账单报告</h1>
   <div class="subtitle" id="subtitle">加载中...</div>
+
+  <!-- 筛选栏 (作用于汇总卡片、全部图表和明细表) -->
+  <div class="filters">
+    <h3>🔍 数据筛选</h3>
+    <div class="filter-row">
+      <div class="filter-item"><label>开始日期</label><input type="date" id="f-start"></div>
+      <div class="filter-item"><label>结束日期</label><input type="date" id="f-end"></div>
+      <div class="filter-item"><label>快速区间</label><div style="display:flex;gap:4px;" id="quick-presets">
+        <button type="button" class="preset" data-months="1">近1月</button>
+        <button type="button" class="preset" data-months="3">近3月</button>
+        <button type="button" class="preset" data-months="6">近6月</button>
+        <button type="button" class="preset" data-months="12">近1年</button>
+      </div></div>
+      <div class="filter-item"><label>平台</label><select id="f-platform"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>项目</label><select id="f-project"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>模型</label><select id="f-model"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>类型</label><select id="f-type"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>关键词</label><input type="text" id="f-keyword" placeholder="搜索模型/项目/平台..."></div>
+      <div class="filter-actions">
+        <button class="btn" id="btn-apply">应用</button>
+        <button class="btn secondary" id="btn-reset">重置</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 汇总卡片 (随筛选联动) -->
   <div class="cards">
@@ -117,24 +143,6 @@
         <button data-m="cost">费用</button>
       </div>
       <div id="chart-typepie" class="chart"></div>
-    </div>
-  </div>
-
-  <!-- 筛选栏 -->
-  <div class="filters">
-    <h3>🔍 数据筛选 <span class="hint" style="color:var(--muted);font-weight:normal;font-size:12px">(筛选同时作用于汇总卡片、全部图表和明细表)</span></h3>
-    <div class="filter-row">
-      <div class="filter-item"><label>开始日期</label><input type="date" id="f-start"></div>
-      <div class="filter-item"><label>结束日期</label><input type="date" id="f-end"></div>
-      <div class="filter-item"><label>平台</label><select id="f-platform"><option value="">全部</option></select></div>
-      <div class="filter-item"><label>项目</label><select id="f-project"><option value="">全部</option></select></div>
-      <div class="filter-item"><label>模型</label><select id="f-model"><option value="">全部</option></select></div>
-      <div class="filter-item"><label>类型</label><select id="f-type"><option value="">全部</option></select></div>
-      <div class="filter-item"><label>关键词</label><input type="text" id="f-keyword" placeholder="搜索模型/项目/平台..."></div>
-      <div class="filter-actions">
-        <button class="btn" id="btn-apply">应用</button>
-        <button class="btn secondary" id="btn-reset">重置</button>
-      </div>
     </div>
   </div>
 
@@ -200,7 +208,10 @@
   // ═══════════════════════════════════════════
   function fmtNum(v) { return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }); }
   function fmtCost(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
-  function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtNum(v); }
+  function fmtCost2(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmtTokensM(v) { return Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' M'; }
+  // 表格之外的 tokens 展示统一用 M; 费用保留 4 位 (表格内明细用)
+  function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtTokensM(v); }
 
   // ═══════════════════════════════════════════
   // 聚合工具 (对 filtered 实时计算)
@@ -247,33 +258,62 @@
       .slice(0, 15);
   }
 
+  function periodKey(d, gran) {
+    const p = n => String(n).padStart(2, '0');
+    if (gran === '月') return d.getFullYear() + '-' + p(d.getMonth() + 1);
+    if (gran === '周') {
+      const y = d.getFullYear();
+      const week = Math.ceil((d - new Date(y, 0, 1)) / 86400000 / 7);
+      return y + '-W' + String(week).padStart(2, '0');
+    }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
   function periodSum(rows, valueKey, gran) {
     const map = new Map();
     for (const r of rows) {
       const p = String(r.bill_start).slice(0, 10);
       if (!p) continue;
-      let key = p;
-      if (gran === '周') {
-        const dt = new Date(p + 'T00:00:00');
-        const y = dt.getFullYear();
-        const week = Math.ceil((dt - new Date(y, 0, 1)) / 86400000 / 7);
-        key = y + '-W' + String(week).padStart(2, '0');
-      } else if (gran === '月') {
-        key = p.slice(0, 7);
-      }
+      const key = periodKey(new Date(p + 'T00:00:00'), gran);
       map.set(key, (map.get(key) || 0) + Number(r[valueKey] || 0));
     }
-    const keys = [...map.keys()].sort();
-    return { keys, values: keys.map(k => map.get(k)) };
+    // 逐日推进补齐空缺时段 (无 API 使用的日/周/月计 0)
+    const dates = [...map.keys()].sort();
+    if (!dates.length) return { keys: [], values: [] };
+    const start = new Date(dates[0] + 'T00:00:00');
+    const end = new Date(dates[dates.length - 1] + 'T00:00:00');
+    const keys = [], values = [];
+    for (let d = start; d <= end; d.setDate(d.getDate() + 1)) {
+      const k = periodKey(d, gran);
+      if (keys.length === 0 || keys[keys.length - 1] !== k) {
+        keys.push(k);
+        values.push(map.get(k) || 0);
+      }
+    }
+    return { keys, values };
+  }
+
+  function disposeChart(id) {
+    if (charts[id]) {
+      try { charts[id].dispose(); } catch (e) { /* 忽略已释放实例 */ }
+      delete charts[id];
+    }
   }
 
   function showEmpty(el, msg) {
+    disposeChart(el.id);
+    el.dataset.hadContent = 1;
     el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9ca3af;font-size:13px;">' + msg + '</div>';
   }
 
   function getChart(id, el) {
     if (typeof echarts === 'undefined') return null;
-    if (el.dataset.hadContent) { el.innerHTML = ''; delete el.dataset.hadContent; }
+    if (el.dataset.hadContent) {
+      // 空态曾清空容器 (canvas 已销毁), 必须释放死实例并重建
+      el.innerHTML = '';
+      delete el.dataset.hadContent;
+      disposeChart(id);
+    }
     if (!charts[id]) charts[id] = echarts.init(el);
     return charts[id];
   }
@@ -288,8 +328,8 @@
     const platforms = new Set(filtered.map(r => r.platform).filter(Boolean));
     const dates = filtered.map(r => String(r.bill_start).slice(0, 10)).filter(Boolean).sort();
 
-    document.getElementById('c-cost').textContent = fmtCost(totalCost);
-    document.getElementById('c-tokens').textContent = fmtNum(totalTokens);
+    document.getElementById('c-cost').textContent = fmtCost2(totalCost);
+    document.getElementById('c-tokens').textContent = fmtTokensM(totalTokens);
     document.getElementById('c-records').textContent = fmtNum(filtered.length);
     document.getElementById('c-models').textContent = fmtNum(models.size);
     document.getElementById('c-platforms').textContent = fmtNum(platforms.size);
@@ -304,7 +344,7 @@
   // ═══════════════════════════════════════════
   function renderTrend() {
     const el = document.getElementById('chart-trend');
-    if (!filtered.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    if (!filtered.length) { showEmpty(el, '当前筛选无数据'); return; }
     const chart = getChart('trend', el);
     if (!chart) return;
 
@@ -323,7 +363,7 @@
         formatter: params => {
           let s = params[0].axisValue;
           for (const p of params) {
-            const v = p.seriesName === '费用' ? fmtCost(p.value) : fmtNum(p.value);
+            const v = p.seriesName === '费用' ? fmtCost(p.value) : fmtTokensM(p.value);
             s += '<br>' + p.marker + ' ' + p.seriesName + ': ' + v;
           }
           return s;
@@ -334,7 +374,8 @@
       xAxis: { type: 'category', data: keys, axisLabel: { rotate: 45, fontSize: 10 } },
       yAxis: [
         { type: 'value', name: '费用(¥)', axisLabel: { fontSize: 10 } },
-        { type: 'value', name: 'Tokens', splitLine: { show: false }, axisLabel: { fontSize: 10 } },
+        { type: 'value', name: 'Tokens(M)', splitLine: { show: false },
+          axisLabel: { fontSize: 10, formatter: v => (v / 1e6).toLocaleString('zh-CN', { maximumFractionDigits: 1 }) } },
       ],
       series: [
         {
@@ -356,7 +397,7 @@
   // ═══════════════════════════════════════════
   function renderPie(id, groups, metric) {
     const el = document.getElementById(id);
-    if (!groups.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    if (!groups.length) { showEmpty(el, '当前筛选无数据'); return; }
     const chart = getChart(id, el);
     if (!chart) return;
     const data = groups.map(d => ({ name: d.name, value: d.value }));
@@ -400,7 +441,7 @@
   // ── 模型费用柱状图 Top-15 ──
   function renderModelBar() {
     const el = document.getElementById('chart-model');
-    if (!filtered.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    if (!filtered.length) { showEmpty(el, '当前筛选无数据'); return; }
     const chart = getChart('model', el);
     if (!chart) return;
     const groups = groupSum(filtered, 'model', 'cost').slice(0, 15);
@@ -424,7 +465,7 @@
     const el = document.getElementById('chart-stack');
     const metric = pieMetric.stack;
     const groups = typeStackGroups(metric);
-    if (!groups.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    if (!groups.length) { showEmpty(el, '当前筛选无数据'); return; }
     const chart = getChart('stack', el);
     if (!chart) return;
 
@@ -569,7 +610,7 @@
         <td class="num">${fmtNum(r.tokens)}</td>
         <td class="num">${fmtCost(r.cost)}</td>
         <td class="num">${r.unit_price ? fmtCost(r.unit_price) : '-'}</td>
-        <td class="muted-cell">${r.source_file}</td>`;
+        <td class="muted-cell">${String(r.source_file || '').split(',').map(s => s.trim()).filter(Boolean).join(' ')}</td>`;
       tbody.appendChild(tr);
     }
   }
@@ -624,6 +665,27 @@
         if (key === 'platform') document.getElementById('t-platform-metric').textContent = btn.dataset.m === 'cost' ? '费用' : 'Tokens';
         render();
       });
+    });
+  });
+
+  // 快速区间预设: 以数据中最晚日期为基准, 向前推 N 个月
+  function fmtDate(d) {
+    const p = n => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+  document.querySelectorAll('#quick-presets .preset').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const maxDate = ROWS.reduce((m, r) => {
+        const d = String(r.bill_start).slice(0, 10);
+        return d > m ? d : m;
+      }, '');
+      if (!maxDate) return;
+      const d = new Date(maxDate + 'T00:00:00');
+      d.setMonth(d.getMonth() - Number(btn.dataset.months));
+      d.setDate(d.getDate() + 1);  // 补回端点, 区间恰好 N 个月
+      document.getElementById('f-start').value = fmtDate(d);
+      document.getElementById('f-end').value = maxDate;
+      applyFilters();
     });
   });
 

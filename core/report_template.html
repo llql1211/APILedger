@@ -121,7 +121,7 @@
       <div id="chart-model" class="chart"></div>
     </div>
     <div class="chart-box">
-      <h3>模型构成对比 <span class="hint">(每行 100%, 平台×模型)</span></h3>
+      <h3>模型 token 构成对比 <span class="hint">(每行 100%, 平台×模型)</span></h3>
       <div class="chart-tabs" id="tabs-stack">
         <button data-m="tokens" class="active">Token 类型</button>
         <button data-m="cost">费用</button>
@@ -197,10 +197,10 @@
   let trendGran = '日';
 
   // 类型归并: 预设价格推断可能产生 "输入(缓存命中)" 等类型名, 统一归入三桶
-  // 顺序即堆叠顺序 (自下而上): 缓存输入 → 输入 → 输出
+  // 数组顺序即堆叠顺序 (自下而上): 缓存输入 → 输入 → 输出; 匹配规则显式互斥, 与顺序无关
   const TYPE_BUCKETS = [
     { key: '缓存输入', color: '#16a085', match: t => t.includes('缓存') },
-    { key: '输入', color: '#1f538d', match: () => true },
+    { key: '输入', color: '#1f538d', match: t => !t.includes('缓存') && !t.includes('输出') },
     { key: '输出', color: '#e8a838', match: t => t.includes('输出') },
   ];
 
@@ -210,7 +210,7 @@
   function fmtNum(v) { return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }); }
   function fmtCost(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
   function fmtCost2(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-  function fmtTokensM(v) { return Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' M'; }
+  function fmtTokensM(v) { return (Number(v) / 1e6).toLocaleString('zh-CN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' M'; }
   // 表格之外的 tokens 展示统一用 M; 费用保留 4 位 (表格内明细用)
   function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtTokensM(v); }
 
@@ -381,7 +381,7 @@
       yAxis: [
         { type: 'value', name: '费用(¥)', axisLabel: { fontSize: 10 } },
         { type: 'value', name: 'Tokens(M)', splitLine: { show: false },
-          axisLabel: { fontSize: 10, formatter: v => (v / 1e6).toLocaleString('zh-CN', { maximumFractionDigits: 1 }) } },
+          axisLabel: { fontSize: 10, formatter: v => (v / 1e6).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) } },
       ],
       series: [
         {

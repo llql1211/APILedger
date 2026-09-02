@@ -150,7 +150,6 @@
   <div class="table-wrap">
     <div class="table-meta">
       <span id="table-count">共 0 条</span>
-      <button class="btn-mini" id="btn-default-sort">恢复默认排序 (平台/项目/日期)</button>
       <div class="pagination">
         <button onclick="changePage(-1)" id="btn-prev">‹ 上一页</button>
         <span id="page-info">1 / 1</span>
@@ -593,10 +592,13 @@
   function sortedRows() {
     const rows = [...filtered];
     if (sortKey === null) {
+      // 默认排序: 时间 → 平台 → 项目 → 模型 → 类型
       rows.sort((a, b) =>
+        String(a.bill_start).localeCompare(String(b.bill_start)) ||
         String(a.platform).localeCompare(String(b.platform), 'zh-CN') ||
         String(a.project).localeCompare(String(b.project), 'zh-CN') ||
-        String(a.bill_start).localeCompare(String(b.bill_start)));
+        String(a.model).localeCompare(String(b.model), 'zh-CN') ||
+        String(a.type).localeCompare(String(b.type), 'zh-CN'));
       return rows;
     }
     rows.sort((a, b) => {
@@ -664,14 +666,6 @@
       page = 1;
       renderTable();
     });
-  });
-
-  // 恢复默认排序
-  document.getElementById('btn-default-sort').addEventListener('click', () => {
-    sortKey = null;
-    document.querySelectorAll('th .arrow').forEach(a => a.remove());
-    page = 1;
-    renderTable();
   });
 
   // 趋势粒度切换

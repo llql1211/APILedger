@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APILedger - API 账单报告</title>
+<style>
+  :root {
+    --primary: #1f538d; --secondary: #2fa572; --bg: #f4f6f9;
+    --card: #ffffff; --border: #e3e6ea; --text: #1a1a1a; --muted: #6b7280;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .card .label { color: var(--muted); font-size: 12px; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+  .card .value.cost { color: var(--primary); }
+  .card .value.tokens { color: var(--secondary); }
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+  .chart-box { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+  .chart-box.wide { grid-column: 1 / -1; }
+  .chart-box h3 { font-size: 14px; margin-bottom: 8px; }
+  .chart-box h3 .hint { color: var(--muted); font-weight: normal; font-size: 12px; }
+  .chart { width: 100%; height: 320px; }
+  .chart.empty { position: relative; }
+  .chart-tabs { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .chart-tabs button { padding: 3px 14px; border: 1px solid var(--border); background: #fff; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  .chart-tabs button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .filters { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+  .filters h3 { font-size: 14px; margin-bottom: 10px; }
+  .filter-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .filter-item label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .filter-item select, .filter-item input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }
+  .filter-item input[type="date"] { width: 150px; }
+  .filter-item input[type="text"] { width: 200px; }
+  .filter-actions { display: flex; gap: 8px; }
+  .btn { padding: 6px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: var(--primary); color: #fff; }
+  .btn.secondary { background: #e5e7eb; color: #374151; }
+  .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead { background: #f9fafb; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { cursor: pointer; user-select: none; font-weight: 600; }
+  th:hover { background: #eef1f4; }
+  th .arrow { color: var(--muted); font-size: 10px; }
+  tr:hover { background: #f8fafc; }
+  .table-meta { padding: 10px 14px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
+  .table-meta .btn-mini { padding: 3px 10px; border: 1px solid var(--border); background: #fff; border-radius: 5px; cursor: pointer; font-size: 12px; color: var(--muted); }
+  .pagination { display: flex; gap: 6px; align-items: center; }
+  .pagination button { padding: 4px 12px; border: 1px solid var(--border); background: #fff; border-radius: 5px; cursor: pointer; font-size: 12px; }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+  .pagination span { font-size: 12px; color: var(--muted); }
+  .num { text-align: right; }
+  .muted-cell { color: var(--muted); }
+  @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <h1>📊 APILedger 账单报告</h1>
+  <div class="subtitle" id="subtitle">加载中...</div>
+
+  <!-- 汇总卡片 (随筛选联动) -->
+  <div class="cards">
+    <div class="card"><div class="label">总费用</div><div class="value cost" id="c-cost">-</div></div>
+    <div class="card"><div class="label">总 Tokens</div><div class="value tokens" id="c-tokens">-</div></div>
+    <div class="card"><div class="label">记录数</div><div class="value" id="c-records">-</div></div>
+    <div class="card"><div class="label">模型数</div><div class="value" id="c-models">-</div></div>
+    <div class="card"><div class="label">平台数</div><div class="value" id="c-platforms">-</div></div>
+  </div>
+
+  <!-- 图表 (全部由前端按当前筛选实时计算) -->
+  <div class="chart-grid">
+    <div class="chart-box wide">
+      <h3>使用趋势 <span class="hint">(费用 / Tokens 双轴)</span></h3>
+      <div class="chart-tabs" id="tabs-gran">
+        <button data-g="日" class="active">日</button>
+        <button data-g="周">周</button>
+        <button data-g="月">月</button>
+      </div>
+      <div id="chart-trend" class="chart"></div>
+    </div>
+    <div class="chart-box">
+      <h3>平台 <span class="hint" id="t-platform-metric">费用</span> 占比</h3>
+      <div class="chart-tabs" id="tabs-platform">
+        <button data-m="cost" class="active">费用</button>
+        <button data-m="tokens">Tokens</button>
+      </div>
+      <div id="chart-platform" class="chart"></div>
+    </div>
+    <div class="chart-box">
+      <h3>模型费用对比 (Top-15)</h3>
+      <div id="chart-model" class="chart"></div>
+    </div>
+    <div class="chart-box">
+      <h3><span id="t-modelpie">各模型 Token 分布</span></h3>
+      <div class="chart-tabs" id="tabs-modelpie">
+        <button data-m="tokens" class="active">Tokens</button>
+        <button data-m="cost">费用</button>
+      </div>
+      <div id="chart-modelpie" class="chart"></div>
+    </div>
+    <div class="chart-box">
+      <h3><span id="t-typepie">Token 类型分布</span></h3>
+      <div class="chart-tabs" id="tabs-typepie">
+        <button data-m="tokens" class="active">Tokens</button>
+        <button data-m="cost">费用</button>
+      </div>
+      <div id="chart-typepie" class="chart"></div>
+    </div>
+  </div>
+
+  <!-- 筛选栏 -->
+  <div class="filters">
+    <h3>🔍 数据筛选 <span class="hint" style="color:var(--muted);font-weight:normal;font-size:12px">(筛选同时作用于汇总卡片、全部图表和明细表)</span></h3>
+    <div class="filter-row">
+      <div class="filter-item"><label>开始日期</label><input type="date" id="f-start"></div>
+      <div class="filter-item"><label>结束日期</label><input type="date" id="f-end"></div>
+      <div class="filter-item"><label>平台</label><select id="f-platform"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>项目</label><select id="f-project"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>模型</label><select id="f-model"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>类型</label><select id="f-type"><option value="">全部</option></select></div>
+      <div class="filter-item"><label>关键词</label><input type="text" id="f-keyword" placeholder="搜索模型/项目/平台..."></div>
+      <div class="filter-actions">
+        <button class="btn" id="btn-apply">应用</button>
+        <button class="btn secondary" id="btn-reset">重置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 明细表 -->
+  <div class="table-wrap">
+    <div class="table-meta">
+      <span id="table-count">共 0 条</span>
+      <button class="btn-mini" id="btn-default-sort">恢复默认排序 (平台/项目/日期)</button>
+      <div class="pagination">
+        <button onclick="changePage(-1)" id="btn-prev">‹ 上一页</button>
+        <span id="page-info">1 / 1</span>
+        <button onclick="changePage(1)" id="btn-next">下一页 ›</button>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th data-k="bill_start">时间</th>
+          <th data-k="platform">平台</th>
+          <th data-k="project">项目</th>
+          <th data-k="model">模型</th>
+          <th data-k="type">类型</th>
+          <th data-k="tokens" class="num">Tokens</th>
+          <th data-k="cost" class="num">金额(¥)</th>
+          <th data-k="unit_price" class="num">单价(¥/百万)</th>
+          <th data-k="source_file">来源文件</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+
+  __ECHARTS_TAG__
+
+  <script>
+  const DATA = __DATA_JSON__;
+  const CHART_COLORS = __CHART_COLORS__;
+
+  // ═══════════════════════════════════════════
+  // 状态
+  // ═══════════════════════════════════════════
+  const ROWS = DATA.records || [];
+  let filtered = ROWS;          // 当前筛选结果
+  let page = 1;
+  let sortKey = null;           // null = 默认复合排序 (平台→项目→日期)
+  let sortDir = -1;
+  const PAGE_SIZE = 30;
+
+  // 图表实例与指标状态
+  const charts = {};
+  const pieMetric = { platform: 'cost', modelpie: 'tokens', typepie: 'tokens' };
+  let trendGran = '日';
+
+  // ═══════════════════════════════════════════
+  // 格式化工具
+  // ═══════════════════════════════════════════
+  function fmtNum(v) { return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }); }
+  function fmtCost(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
+  function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtNum(v); }
+
+  // ═══════════════════════════════════════════
+  // 聚合工具 (对 filtered 实时计算)
+  // ═══════════════════════════════════════════
+  function groupSum(rows, field, valueKey) {
+    const map = new Map();
+    for (const r of rows) {
+      const k = r[field] || '(空)';
+      map.set(k, (map.get(k) || 0) + Number(r[valueKey] || 0));
+    }
+    return [...map.entries()]
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+  }
+
+  function dailySum(rows, valueKey) {
+    const map = new Map();
+    for (const r of rows) {
+      const d = String(r.bill_start).slice(0, 10);
+      if (!d) continue;
+      map.set(d, (map.get(d) || 0) + Number(r[valueKey] || 0));
+    }
+    return [...map.entries()]
+      .map(([period, total]) => ({ period, total }))
+      .sort((a, b) => a.period.localeCompare(b.period));
+  }
+
+  // 按粒度聚合 (日/周/月)
+  function periodSum(rows, valueKey, gran) {
+    const map = new Map();
+    for (const r of rows) {
+      const p = String(r.bill_start).slice(0, 10);
+      if (!p) continue;
+      let key = p;
+      if (gran === '周') {
+        const dt = new Date(p + 'T00:00:00');
+        const y = dt.getFullYear();
+        const week = Math.ceil((dt - new Date(y, 0, 1)) / 86400000 / 7);
+        key = y + '-W' + String(week).padStart(2, '0');
+      } else if (gran === '月') {
+        key = p.slice(0, 7);
+      }
+      map.set(key, (map.get(key) || 0) + Number(r[valueKey] || 0));
+    }
+    const keys = [...map.keys()].sort();
+    return { keys, values: keys.map(k => map.get(k)) };
+  }
+
+  function showEmpty(el, msg) {
+    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#9ca3af;font-size:13px;">' + msg + '</div>';
+  }
+
+  function getChart(id, el) {
+    if (typeof echarts === 'undefined') return null;
+    if (el.dataset.hadContent) { el.innerHTML = ''; delete el.dataset.hadContent; }
+    if (!charts[id]) charts[id] = echarts.init(el);
+    return charts[id];
+  }
+
+  // ═══════════════════════════════════════════
+  // 汇总卡片 (随筛选联动)
+  // ═══════════════════════════════════════════
+  function renderSummary() {
+    const totalCost = filtered.reduce((s, r) => s + Number(r.cost || 0), 0);
+    const totalTokens = filtered.reduce((s, r) => s + Number(r.tokens || 0), 0);
+    const models = new Set(filtered.map(r => r.model).filter(Boolean));
+    const platforms = new Set(filtered.map(r => r.platform).filter(Boolean));
+    const dates = filtered.map(r => String(r.bill_start).slice(0, 10)).filter(Boolean).sort();
+
+    document.getElementById('c-cost').textContent = fmtCost(totalCost);
+    document.getElementById('c-tokens').textContent = fmtNum(totalTokens);
+    document.getElementById('c-records').textContent = fmtNum(filtered.length);
+    document.getElementById('c-models').textContent = fmtNum(models.size);
+    document.getElementById('c-platforms').textContent = fmtNum(platforms.size);
+    document.getElementById('subtitle').textContent =
+      (dates.length ? dates[0] + ' ~ ' + dates[dates.length - 1] : '暂无数据') +
+      ` · ${platforms.size} 个平台 · ${models.size} 个模型` +
+      (filtered.length !== ROWS.length ? ` (已筛选 ${filtered.length} / 全部 ${ROWS.length} 条)` : '');
+  }
+
+  // ═══════════════════════════════════════════
+  // 趋势图: 费用 + Tokens 双轴折线 (日/周/月)
+  // ═══════════════════════════════════════════
+  function renderTrend() {
+    const el = document.getElementById('chart-trend');
+    if (!filtered.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    const chart = getChart('trend', el);
+    if (!chart) return;
+
+    const cost = periodSum(filtered, 'cost', trendGran);
+    const tokens = periodSum(filtered, 'tokens', trendGran);
+    const keys = cost.keys.length >= tokens.keys.length ? cost.keys : tokens.keys;
+    const costMap = new Map(cost.keys.map((k, i) => [k, cost.values[i]]));
+    const tokenMap = new Map(tokens.keys.map((k, i) => [k, tokens.values[i]]));
+    const costVals = keys.map(k => costMap.get(k) || 0);
+    const tokenVals = keys.map(k => tokenMap.get(k) || 0);
+    const avg = costVals.length ? costVals.reduce((a, b) => a + b, 0) / costVals.length : 0;
+
+    chart.setOption({
+      tooltip: {
+        trigger: 'axis',
+        formatter: params => {
+          let s = params[0].axisValue;
+          for (const p of params) {
+            const v = p.seriesName === '费用' ? fmtCost(p.value) : fmtNum(p.value);
+            s += '<br>' + p.marker + ' ' + p.seriesName + ': ' + v;
+          }
+          return s;
+        },
+      },
+      legend: { top: 0, right: 10 },
+      grid: { left: 70, right: 70, top: 34, bottom: 40 },
+      xAxis: { type: 'category', data: keys, axisLabel: { rotate: 45, fontSize: 10 } },
+      yAxis: [
+        { type: 'value', name: '费用(¥)', axisLabel: { fontSize: 10 } },
+        { type: 'value', name: 'Tokens', splitLine: { show: false }, axisLabel: { fontSize: 10 } },
+      ],
+      series: [
+        {
+          name: '费用', type: 'line', data: costVals, smooth: true,
+          itemStyle: { color: '#1f538d' }, areaStyle: { opacity: 0.08 },
+          markLine: avg ? { data: [{ yAxis: avg }], silent: true, symbol: 'none',
+            lineStyle: { type: 'dashed', color: '#c0392b' }, label: { formatter: '均值' } } : undefined,
+        },
+        {
+          name: 'Tokens', type: 'line', yAxisIndex: 1, data: tokenVals, smooth: true,
+          itemStyle: { color: '#2fa572' }, areaStyle: { opacity: 0.08 },
+        },
+      ],
+    }, true);
+  }
+
+  // ═══════════════════════════════════════════
+  // 通用饼图
+  // ═══════════════════════════════════════════
+  function renderPie(id, groups, metric) {
+    const el = document.getElementById(id);
+    if (!groups.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    const chart = getChart(id, el);
+    if (!chart) return;
+    const data = groups.map(d => ({ name: d.name, value: d.value }));
+    chart.setOption({
+      tooltip: {
+        trigger: 'item',
+        formatter: p => `${p.name}: ${fmtMetric(p.value, metric)} (${p.percent}%)`,
+      },
+      legend: { bottom: 0, type: 'scroll' },
+      series: [{
+        type: 'pie', radius: ['35%', '65%'], data,
+        label: { formatter: '{b}\n{d}%', fontSize: 11 },
+        color: CHART_COLORS,
+      }],
+    }, true);
+  }
+
+  // ── 平台占比 ──
+  function renderPlatform() {
+    renderPie('chart-platform', groupSum(filtered, 'platform', pieMetric.platform), pieMetric.platform);
+  }
+
+  // ── 平台内各模型 Token 分布 (跟随平台筛选) ──
+  function renderModelPie() {
+    const pf = document.getElementById('f-platform').value;
+    document.getElementById('t-modelpie').textContent =
+      pf ? `平台「${pf}」内各模型 ${pieMetric.modelpie === 'cost' ? '费用' : 'Token'} 分布`
+         : `各模型 ${pieMetric.modelpie === 'cost' ? '费用' : 'Token'} 分布 (全部平台)`;
+    renderPie('chart-modelpie', groupSum(filtered, 'model', pieMetric.modelpie), pieMetric.modelpie);
+  }
+
+  // ── 模型内 Token 类型分布 (跟随模型筛选) ──
+  function renderTypePie() {
+    const mf = document.getElementById('f-model').value;
+    document.getElementById('t-typepie').textContent =
+      mf ? `模型「${mf}」的 Token 类型分布`
+         : 'Token 类型分布 (全部模型)';
+    renderPie('chart-typepie', groupSum(filtered, 'type', pieMetric.typepie), pieMetric.typepie);
+  }
+
+  // ── 模型费用柱状图 Top-15 ──
+  function renderModelBar() {
+    const el = document.getElementById('chart-model');
+    if (!filtered.length) { el.dataset.hadContent = 1; showEmpty(el, '当前筛选无数据'); return; }
+    const chart = getChart('model', el);
+    if (!chart) return;
+    const groups = groupSum(filtered, 'model', 'cost').slice(0, 15);
+    const names = [...groups].reverse().map(d => d.name);
+    const vals = [...groups].reverse().map(d => d.value);
+    chart.setOption({
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => p[0].name + '<br>' + fmtCost(p[0].value) },
+      grid: { left: 130, right: 60, top: 20, bottom: 30 },
+      xAxis: { type: 'value', name: '费用(¥)', axisLabel: { fontSize: 10 } },
+      yAxis: { type: 'category', data: names, axisLabel: { fontSize: 10 } },
+      series: [{
+        type: 'bar', data: vals,
+        itemStyle: { color: '#2fa572', borderRadius: [0, 4, 4, 0] },
+        label: { show: true, position: 'right', formatter: p => fmtCost(p.value), fontSize: 10 },
+      }],
+    }, true);
+  }
+
+  function renderCharts() {
+    renderTrend();
+    renderPlatform();
+    renderModelBar();
+    renderModelPie();
+    renderTypePie();
+  }
+
+  // ═══════════════════════════════════════════
+  // 筛选
+  // ═══════════════════════════════════════════
+  function applyFilters() {
+    const start = document.getElementById('f-start').value;
+    const end = document.getElementById('f-end').value;
+    const pf = document.getElementById('f-platform').value;
+    const pjf = document.getElementById('f-project').value;
+    const mf = document.getElementById('f-model').value;
+    const tf = document.getElementById('f-type').value;
+    const kw = document.getElementById('f-keyword').value.trim().toLowerCase();
+
+    filtered = ROWS.filter(r => {
+      if (start && r.bill_start.slice(0, 10) < start) return false;
+      if (end && r.bill_start.slice(0, 10) > end) return false;
+      if (pf && r.platform !== pf) return false;
+      if (pjf && r.project !== pjf) return false;
+      if (mf && r.model !== mf) return false;
+      if (tf && r.type !== tf) return false;
+      if (kw && !(r.model + r.project + r.platform + r.type).toLowerCase().includes(kw)) return false;
+      return true;
+    });
+    page = 1;
+    renderAll();
+  }
+
+  function resetFilters() {
+    ['f-start', 'f-end', 'f-keyword'].forEach(id => document.getElementById(id).value = '');
+    ['f-platform', 'f-project', 'f-model', 'f-type'].forEach(id => {
+      const s = document.getElementById(id); s.selectedIndex = 0;
+    });
+    applyFilters();
+  }
+
+  function buildOptions(selId, key) {
+    const set = new Set(ROWS.map(r => r[key]).filter(Boolean));
+    const sel = document.getElementById(selId);
+    for (const v of [...set].sort((a, b) => String(a).localeCompare(String(b), 'zh-CN'))) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      sel.appendChild(opt);
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // 明细表: 默认复合排序 (平台→项目→日期) / 单列排序 / 翻页
+  // ═══════════════════════════════════════════
+  function sortedRows() {
+    const rows = [...filtered];
+    if (sortKey === null) {
+      rows.sort((a, b) =>
+        String(a.platform).localeCompare(String(b.platform), 'zh-CN') ||
+        String(a.project).localeCompare(String(b.project), 'zh-CN') ||
+        String(a.bill_start).localeCompare(String(b.bill_start)));
+      return rows;
+    }
+    rows.sort((a, b) => {
+      const va = a[sortKey], vb = b[sortKey];
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * sortDir;
+      return String(va || '').localeCompare(String(vb || ''), 'zh-CN') * sortDir;
+    });
+    return rows;
+  }
+
+  function changePage(delta) {
+    page += delta;
+    renderTable();
+  }
+
+  function renderTable() {
+    const rows = sortedRows();
+    const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    page = Math.max(1, Math.min(page, totalPages));
+    document.getElementById('table-count').textContent = `共 ${rows.length} 条`;
+    document.getElementById('page-info').textContent = `${page} / ${totalPages}`;
+    document.getElementById('btn-prev').disabled = page <= 1;
+    document.getElementById('btn-next').disabled = page >= totalPages;
+
+    const start = (page - 1) * PAGE_SIZE;
+    const slice = rows.slice(start, start + PAGE_SIZE);
+    const tbody = document.getElementById('table-body');
+    tbody.innerHTML = '';
+    if (!slice.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="9" style="text-align:center;color:#9ca3af;padding:24px;">无匹配数据</td>';
+      tbody.appendChild(tr);
+      return;
+    }
+    for (const r of slice) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${String(r.bill_start).slice(0, 16)}</td>
+        <td>${r.platform}</td>
+        <td>${r.project}</td>
+        <td>${r.model}</td>
+        <td>${r.type}</td>
+        <td class="num">${fmtNum(r.tokens)}</td>
+        <td class="num">${fmtCost(r.cost)}</td>
+        <td class="num">${r.unit_price ? fmtCost(r.unit_price) : '-'}</td>
+        <td class="muted-cell">${r.source_file}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // 事件绑定
+  // ═══════════════════════════════════════════
+  // 表头排序
+  document.querySelectorAll('th[data-k]').forEach(th => {
+    th.addEventListener('click', () => {
+      const k = th.dataset.k;
+      if (sortKey === k) sortDir *= -1;
+      else { sortKey = k; sortDir = -1; }
+      document.querySelectorAll('th .arrow').forEach(a => a.remove());
+      const arrow = document.createElement('span');
+      arrow.className = 'arrow';
+      arrow.textContent = sortDir === -1 ? ' ↓' : ' ↑';
+      th.appendChild(arrow);
+      page = 1;
+      renderTable();
+    });
+  });
+
+  // 恢复默认排序
+  document.getElementById('btn-default-sort').addEventListener('click', () => {
+    sortKey = null;
+    document.querySelectorAll('th .arrow').forEach(a => a.remove());
+    page = 1;
+    renderTable();
+  });
+
+  // 趋势粒度切换
+  document.querySelectorAll('#tabs-gran button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#tabs-gran button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      trendGran = btn.dataset.g;
+      renderTrend();
+    });
+  });
+
+  // 饼图指标切换
+  [['tabs-platform', 'platform', renderPlatform],
+   ['tabs-modelpie', 'modelpie', renderModelPie],
+   ['tabs-typepie', 'typepie', renderTypePie]].forEach(([tabsId, key, render]) => {
+    document.querySelectorAll('#' + tabsId + ' button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('#' + tabsId + ' button').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        pieMetric[key] = btn.dataset.m;
+        if (key === 'platform') document.getElementById('t-platform-metric').textContent = btn.dataset.m === 'cost' ? '费用' : 'Tokens';
+        render();
+      });
+    });
+  });
+
+  // 筛选: 下拉/日期即时生效, 关键词回车或点按钮
+  ['f-start', 'f-end', 'f-platform', 'f-project', 'f-model', 'f-type'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applyFilters);
+  });
+  document.getElementById('f-keyword').addEventListener('keydown', e => {
+    if (e.key === 'Enter') applyFilters();
+  });
+  document.getElementById('btn-apply').addEventListener('click', applyFilters);
+  document.getElementById('btn-reset').addEventListener('click', resetFilters);
+
+  window.addEventListener('resize', () => Object.values(charts).forEach(c => c.resize()));
+
+  // ═══════════════════════════════════════════
+  // 初始化
+  // ═══════════════════════════════════════════
+  function renderAll() {
+    renderSummary();
+    renderCharts();
+    renderTable();
+  }
+  buildOptions('f-platform', 'platform');
+  buildOptions('f-project', 'project');
+  buildOptions('f-model', 'model');
+  buildOptions('f-type', 'type');
+  renderAll();
+  </script>
+</body>
+</html>

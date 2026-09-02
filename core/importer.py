@@ -4,7 +4,7 @@ APILedger - XLSX / CSV 文件扫描、读取、列匹配、两阶段导入、归
 
 import os
 import shutil
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -448,11 +448,14 @@ def commit_import(
     filepath: str,
     file_result: Dict[str, Any],
     force_overwrite_conflicts: bool = False,
+    overwrite_rows: Optional[List[Dict[str, Any]]] = None,
 ) -> int:
     """
     第二阶段执行：确认导入。
     写入 new + merges (互补数据累加); 若 force_overwrite_conflicts 则
-    将冲突行强制覆盖 (清空该 key 已有贡献, 以本次为准)。最后归档文件。
+    将冲突行强制覆盖 (清空该 key 已有贡献, 以本次为准)。
+    overwrite_rows 指定逐条裁决时要覆盖的冲突行 (优先于 force_overwrite_conflicts)。
+    最后归档文件。
 
     返回实际写入行数。
     """
@@ -463,7 +466,10 @@ def commit_import(
     if to_write:
         written = db.upsert_batch(to_write)
 
-    if force_overwrite_conflicts:
+    if overwrite_rows is not None:
+        if overwrite_rows:
+            written += db.replace_keys_batch(overwrite_rows)
+    elif force_overwrite_conflicts:
         conflict_rows = [c["row"] for c in file_result.get("conflicts", [])]
         if conflict_rows:
             written += db.replace_keys_batch(conflict_rows)

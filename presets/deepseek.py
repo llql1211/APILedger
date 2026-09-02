@@ -57,6 +57,21 @@ MODEL_MAP = {
     "deepseek-v4-pro":   "DeepSeek-V4-Pro",
 }
 
+# 官方单价表 (元/百万tokens), 可选。供报告展示层"单价吸附":
+# 账单按请求取整导致计算单价微偏 (如 2.01), 与该账单日期生效的官方价
+# 相对误差 ≤2% 时, 报告按官方价显示。同一模型不同时段价格不同, 用 history
+# 表达 (until 为该时段截止日, 含当日)。各模型价格不同, 逐模型填写。
+#
+# PRICING = {
+#     "DeepSeek-V3": {"input_hit": 0.5, "input_miss": 2.0, "output": 8.0},
+#     "DeepSeek-R1": {
+#         "history": [
+#             {"until": "2026-08-31", "input_hit": 0.5, "input_miss": 2.0, "output": 8.0},
+#             {"until": "2099-12-31", "input_hit": 0.8, "input_miss": 3.0, "output": 10.0},
+#         ],
+#     },
+# }
+
 # utc_date 格式: yyyymmdd (如 20260621) → ISO yyyy-mm-dd
 DATE_RE = re.compile(r'^(\d{4})(\d{2})(\d{2})$')
 

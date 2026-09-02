@@ -63,6 +63,21 @@ MODEL_MAP = {
 # 解析 "配置描述" 列: "输入:52,110tokens" → ("输入", 52110)
 DESC_RE = re.compile(r'^(\S+)\s*:\s*([\d,]+)\s*tokens?\s*$')
 
+# 官方单价表 (元/百万tokens), 可选。供报告展示层"单价吸附":
+# 账单按请求取整导致计算单价微偏 (如 2.01), 与该账单日期生效的官方价
+# 相对误差 ≤2% 时, 报告按官方价显示。同一模型不同时段价格不同, 用 history
+# 表达 (until 为该时段截止日, 含当日, 语义与 type 反推一致)。各模型价格不同, 逐模型填写。
+#
+# PRICING = {
+#     "GLM-5": {
+#         "history": [
+#             {"until": "2026-08-31", "input_hit": 1.0, "input_miss": 3.0, "output": 9.0},
+#             {"until": "2099-12-31", "input_hit": 1.2, "input_miss": 3.5, "output": 10.0},
+#         ],
+#     },
+#     "Kimi-K2.5": {"input_hit": 1.0, "input_miss": 3.0, "output": 9.0},  # 无调价可不用 history
+# }
+
 
 def parse_row(raw_row: dict, mapped_row: dict) -> dict | None:
     """

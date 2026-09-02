@@ -209,6 +209,41 @@
   // 表格之外的 tokens 展示统一用 M; 费用保留 4 位 (表格内明细用)
   function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtTokensM(v); }
 
+  // 单价吸附: 账单按请求取整导致计算单价微偏 (如 2.01), 与该账单日期生效的
+  // 官方价相对误差 ≤2% 时按官方价显示 (如 2.00)。原始值仍在数据库, 仅展示吸附。
+  // 同一模型不同时段价格不同 → 预设 PRICING 用 history 表达, 此处按日期解析。
+  const PRICE_TABLE = DATA.pricing || {};
+
+  // 模型在某日期生效的官方价 {input_hit, input_miss, output}; 无价格表返回 null
+  function officialPrice(model, dateStr) {
+    const cfg = PRICE_TABLE[model];
+    if (!cfg) return null;
+    let cur = cfg, best = null;
+    for (const h of (cfg.history || [])) {
+      if (dateStr && String(dateStr) <= String(h.until) &&
+          (!best || String(h.until) < String(best.until))) best = h;
+    }
+    if (best) cur = best;  // 落在历史时段内 → 用该时段价格 (与导入侧 type 反推同语义)
+    const out = {};
+    for (const k of ['input_hit', 'input_miss', 'output']) {
+      if (cur[k] != null) out[k] = Number(cur[k]);
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  // 单行单价吸附: 按行类型选对应官方价 (缓存输入→hit, 输出→output, 其余→miss)
+  function snapUnitPrice(row) {
+    const v = Number(row.unit_price || 0);
+    if (!v) return v;
+    const prices = officialPrice(row.model, String(row.bill_start).slice(0, 10));
+    if (!prices) return v;
+    const t = String(row.type || '');
+    const official = prices[t.includes('缓存') ? 'input_hit'
+                          : t.includes('输出') ? 'output' : 'input_miss'];
+    if (official == null) return v;
+    return Math.abs(v - official) <= official * 0.02 ? official : v;
+  }
+
   // ═══════════════════════════════════════════
   // 聚合工具 (对 filtered 实时计算)
   // ═══════════════════════════════════════════
@@ -238,20 +273,23 @@
   // 按粒度聚合 (日/周/月)
   // 按平台×模型分组, 类型归并到三桶 (缓存输入/输入/输出), 同时累计 tokens 与费用
   // 排序固定按 token 消耗量取 Top-15, 切换 token/费用 指标不改变模型顺序
+  // priceCost: Σ(每行吸附后单价 × tokens), 供加权均价 (元/1M tokens)
   function typeStackGroups() {
-    const map = new Map();  // label -> { label, tokens: Map, cost: Map, tokenTotal, costTotal }
+    const map = new Map();  // label -> { label, tokens: Map, cost: Map, tokenTotal, costTotal, priceCost }
     for (const r of filtered) {
       const label = r.platform ? `${r.platform} · ${r.model || '(空)'}` : (r.model || '(空)');
       let g = map.get(label);
       if (!g) {
-        g = { label, tokens: new Map(), cost: new Map(), tokenTotal: 0, costTotal: 0 };
+        g = { label, tokens: new Map(), cost: new Map(), tokenTotal: 0, costTotal: 0, priceCost: 0 };
         map.set(label, g);
       }
+      const tokens = Number(r.tokens || 0);
       const bucket = TYPE_BUCKETS.find(b => b.match(r.type || '')).key;
-      g.tokens.set(bucket, (g.tokens.get(bucket) || 0) + Number(r.tokens || 0));
+      g.tokens.set(bucket, (g.tokens.get(bucket) || 0) + tokens);
       g.cost.set(bucket, (g.cost.get(bucket) || 0) + Number(r.cost || 0));
-      g.tokenTotal += Number(r.tokens || 0);
+      g.tokenTotal += tokens;
       g.costTotal += Number(r.cost || 0);
+      g.priceCost += snapUnitPrice(r) * tokens;
     }
     return [...map.values()]
       .filter(g => g.tokenTotal > 0 || g.costTotal > 0)
@@ -467,10 +505,11 @@
 
     const bucketMap = metric === 'cost' ? 'cost' : 'tokens';
     const totalOf = g => metric === 'cost' ? g.costTotal : g.tokenTotal;
-    // 均价: 总费用 / 总 tokens × 1e6, 元每 1M tokens (与分段指标无关, 恒为费用口径)
+    // 均价 (元/1M tokens): Σ(每行吸附后单价 × tokens) / Σtokens, 按行日期取当期官方价,
+    // 跨价格时段自然得到加权均价; 无官方价的行走原始单价 (等价于 费用/tokens)
     const avgRateText = g => {
       if (!g.tokenTotal) return '';
-      const rate = g.costTotal * 1e6 / g.tokenTotal;
+      const rate = g.priceCost / g.tokenTotal;
       return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '/M';
     };
     // 行内最顶端的非零段右侧显示均价标签 (只在该段处标注一次)
@@ -633,7 +672,7 @@
         <td>${r.type}</td>
         <td class="num">${fmtNum(r.tokens)}</td>
         <td class="num">${fmtCost(r.cost)}</td>
-        <td class="num">${r.unit_price ? fmtCost(r.unit_price) : '-'}</td>
+        <td class="num">${r.unit_price ? fmtCost(snapUnitPrice(r)) : '-'}</td>
         <td class="muted-cell">${String(r.source_file || '').split(',').map(s => s.trim()).filter(Boolean).join(' ')}</td>`;
       tbody.appendChild(tr);
     }

@@ -37,12 +37,70 @@ CHART_COLORS = [
 # 数据提取
 # ═══════════════════════════════════════════════════
 
+def _collect_official_prices() -> Dict[str, Dict[str, Any]]:
+    """
+    从各平台预设的 PRICING 收集官方单价表 → {模型名: 价格配置}。
+
+    价格配置结构与预设一致:
+      {"input_hit": .., "input_miss": .., "output": ..,
+       "history": [{"until": "时段截止日", ...价格...}, ...]}
+    同一模型不同时段价格不同, 由 history 表达 (until 含当日, 语义与
+    _apply_price_hint 的 type 反推一致)。旧格式 {platform: {model: ...}} 自动摊平。
+
+    供前端展示层"单价吸附": 计算单价与该日期生效的官方价相对误差 ≤2% 时按官方价显示。
+    """
+    from core.presets import load_all_presets, get_pricing_dict
+
+    price_keys = ("input_hit", "input_miss", "output")
+
+    def _iter_model_cfgs(pricing: dict):
+        """产出 (模型名, 价格配置)。兼容新旧两种 PRICING 结构。"""
+        for model, cfg in pricing.items():
+            if not isinstance(cfg, dict):
+                continue
+            if any(k in cfg for k in price_keys + ("history",)):
+                yield model, cfg                          # 新格式: model → 价格配置
+            else:
+                for m2, sub in cfg.items():               # 旧格式: platform → model → 配置
+                    if isinstance(sub, dict):
+                        yield m2, sub
+
+    def _norm_cfg(cfg) -> dict:
+        out: Dict[str, Any] = {}
+        for k in price_keys:
+            try:
+                v = float(cfg.get(k) or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if v > 0:
+                out[k] = v
+        hist = [h for h in (cfg.get("history") or []) if isinstance(h, dict)]
+        if hist:
+            out["history"] = hist
+        return out
+
+    merged: Dict[str, Dict[str, Any]] = {}
+    for preset in load_all_presets():
+        for model, cfg in _iter_model_cfgs(get_pricing_dict(preset)):
+            norm = _norm_cfg(cfg)
+            if not norm:
+                continue
+            dst = merged.setdefault(model, {})
+            for k, v in norm.items():
+                if k == "history":
+                    dst.setdefault("history", []).extend(v)
+                else:
+                    dst[k] = v
+    return merged
+
+
 def _build_report_data(db: Database) -> Dict[str, Any]:
     """
     从数据库提取报告所需的全部数据。
 
     只输出全量明细 records + 一个全库兜底 summary;
     所有维度聚合 (趋势 / 平台 / 模型 / 类型) 由前端按筛选结果实时计算。
+    pricing 为各预设的官方单价表, 供前端单价吸附。
     """
     records = db.get_all(order_by="date DESC")
 
@@ -73,7 +131,7 @@ def _build_report_data(db: Database) -> Dict[str, Any]:
             "source_file": r.get("source_file", ""),
         })
 
-    return {"summary": summary, "records": raw_records}
+    return {"summary": summary, "records": raw_records, "pricing": _collect_official_prices()}
 
 
 # ═══════════════════════════════════════════════════

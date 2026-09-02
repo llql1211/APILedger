@@ -92,6 +92,46 @@ class TestExportReport:
         assert os.path.exists(path)
 
 
+class TestOfficialPrices:
+    """展示层单价吸附: 预设 PRICING (含 history 时段价) → 报告内嵌官方价表"""
+
+    def _fake_preset(self, pricing):
+        import types
+        return types.SimpleNamespace(PRICING=pricing)
+
+    def test_collect_keeps_history_structure(self, monkeypatch):
+        import core.report as report
+        pricing = {"GLM-5": {"history": [
+            {"until": "2026-08-31", "input_hit": 1.0, "input_miss": 3.0, "output": 9.0},
+            {"until": "2099-12-31", "input_hit": 1.2, "input_miss": 3.5, "output": 10.0},
+        ]}}
+        monkeypatch.setattr("core.presets.load_all_presets",
+                            lambda: [self._fake_preset(pricing)])
+        prices = report._collect_official_prices()
+        assert prices["GLM-5"]["history"] == pricing["GLM-5"]["history"]
+
+    def test_collect_flattens_old_format(self, monkeypatch):
+        import core.report as report
+        pricing = {"Paratera": {"GLM-5": {"input_miss": 3.0, "output": 9.0}}}
+        monkeypatch.setattr("core.presets.load_all_presets",
+                            lambda: [self._fake_preset(pricing)])
+        prices = report._collect_official_prices()
+        assert prices["GLM-5"] == {"input_miss": 3.0, "output": 9.0}
+
+    def test_pricing_embedded_in_html(self, seeded_db, monkeypatch):
+        import core.report as report
+        monkeypatch.setattr(report, "_collect_official_prices",
+                            lambda: {"GLM-5": {"input_miss": 3.0, "output": 9.0}})
+        data = json.loads(_extract_data(build_html(seeded_db)))
+        assert data["pricing"]["GLM-5"]["output"] == 9.0
+
+    def test_empty_pricing_still_embeds(self, seeded_db, monkeypatch):
+        import core.report as report
+        monkeypatch.setattr(report, "_collect_official_prices", lambda: {})
+        data = json.loads(_extract_data(build_html(seeded_db)))
+        assert data["pricing"] == {}
+
+
 def _extract_data(html: str) -> str:
     """从生成的 HTML 中取回内嵌的 DATA JSON"""
     marker = "const DATA = "

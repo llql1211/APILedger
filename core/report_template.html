@@ -197,10 +197,11 @@
   let trendGran = '日';
 
   // 类型归并: 预设价格推断可能产生 "输入(缓存命中)" 等类型名, 统一归入三桶
+  // 顺序即堆叠顺序 (自下而上): 缓存输入 → 输入 → 输出
   const TYPE_BUCKETS = [
     { key: '缓存输入', color: '#16a085', match: t => t.includes('缓存') },
-    { key: '输出', color: '#e8a838', match: t => t.includes('输出') },
     { key: '输入', color: '#1f538d', match: () => true },
+    { key: '输出', color: '#e8a838', match: t => t.includes('输出') },
   ];
 
   // ═══════════════════════════════════════════
@@ -240,21 +241,26 @@
   }
 
   // 按粒度聚合 (日/周/月)
-  // 按平台×模型分组, 类型归并到三桶 (缓存输入/输出/输入), 按总量取 Top-15
-  function typeStackGroups(metric) {
-    const map = new Map();  // label -> { label, total, buckets: Map(type -> 值) }
+  // 按平台×模型分组, 类型归并到三桶 (缓存输入/输入/输出), 同时累计 tokens 与费用
+  // 排序固定按 token 消耗量取 Top-15, 切换 token/费用 指标不改变模型顺序
+  function typeStackGroups() {
+    const map = new Map();  // label -> { label, tokens: Map, cost: Map, tokenTotal, costTotal }
     for (const r of filtered) {
       const label = r.platform ? `${r.platform} · ${r.model || '(空)'}` : (r.model || '(空)');
       let g = map.get(label);
-      if (!g) { g = { label, total: 0, buckets: new Map() }; map.set(label, g); }
+      if (!g) {
+        g = { label, tokens: new Map(), cost: new Map(), tokenTotal: 0, costTotal: 0 };
+        map.set(label, g);
+      }
       const bucket = TYPE_BUCKETS.find(b => b.match(r.type || '')).key;
-      const v = Number(r[metric] || 0);
-      g.buckets.set(bucket, (g.buckets.get(bucket) || 0) + v);
-      g.total += v;
+      g.tokens.set(bucket, (g.tokens.get(bucket) || 0) + Number(r.tokens || 0));
+      g.cost.set(bucket, (g.cost.get(bucket) || 0) + Number(r.cost || 0));
+      g.tokenTotal += Number(r.tokens || 0);
+      g.costTotal += Number(r.cost || 0);
     }
     return [...map.values()]
-      .filter(g => g.total > 0)
-      .sort((a, b) => b.total - a.total)
+      .filter(g => g.tokenTotal > 0 || g.costTotal > 0)
+      .sort((a, b) => b.tokenTotal - a.tokenTotal)
       .slice(0, 15);
   }
 
@@ -464,17 +470,21 @@
   function renderStack() {
     const el = document.getElementById('chart-stack');
     const metric = pieMetric.stack;
-    const groups = typeStackGroups(metric);
+    const groups = typeStackGroups();
     if (!groups.length) { showEmpty(el, '当前筛选无数据'); return; }
     const chart = getChart('stack', el);
     if (!chart) return;
+
+    const bucketMap = metric === 'cost' ? 'cost' : 'tokens';
+    const totalOf = g => metric === 'cost' ? g.costTotal : g.tokenTotal;
 
     // 三段百分比堆叠 (每行合计 100)
     const series = TYPE_BUCKETS.map(b => ({
       name: b.key, type: 'bar', stack: 'total', barMaxWidth: 22,
       data: groups.map(g => {
-        const v = g.buckets.get(b.key) || 0;
-        return g.total ? +(v * 100 / g.total).toFixed(2) : 0;
+        const v = g[bucketMap].get(b.key) || 0;
+        const total = totalOf(g);
+        return total ? +(v * 100 / total).toFixed(2) : 0;
       }).reverse(),
       itemStyle: { color: b.color },
     }));
@@ -488,7 +498,7 @@
           for (const p of params) {
             // series data 已 reverse, 用反序索引取回原始分组
             const g = groups[groups.length - 1 - p.dataIndex];
-            const abs = g ? (g.buckets.get(p.seriesName) || 0) : 0;
+            const abs = g ? (g[bucketMap].get(p.seriesName) || 0) : 0;
             s += '<br>' + p.marker + ' ' + p.seriesName + ': ' + fmtMetric(abs, metric) + ' (' + p.value + '%)';
           }
           return s;

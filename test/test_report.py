@@ -66,6 +66,13 @@ class TestBuildHtml:
         for fid in ("f-platform", "f-project", "f-model", "f-type", "f-start", "f-end"):
             assert f'id="{fid}"' in html
 
+    def test_chart_containers_present(self, seeded_db):
+        """全部图表容器齐全 (趋势/平台/模型柱状/构成堆叠/模型分布/类型分布)"""
+        html = build_html(seeded_db)
+        for cid in ("chart-trend", "chart-platform", "chart-model",
+                    "chart-stack", "chart-modelpie", "chart-typepie"):
+            assert f'id="{cid}"' in html
+
 
 class TestExportReport:
     def test_export_writes_file(self, seeded_db, tmp_path):

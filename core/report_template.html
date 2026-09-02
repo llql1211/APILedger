@@ -11,8 +11,7 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin-bottom: 12px; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 20px; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
   .card .label { color: var(--muted); font-size: 12px; }
@@ -64,7 +63,6 @@
 </head>
 <body>
   <h1>📊 APILedger 账单报告</h1>
-  <div class="subtitle" id="subtitle">加载中...</div>
 
   <!-- 筛选栏 (作用于汇总卡片、全部图表和明细表) -->
   <div class="filters">
@@ -339,10 +337,8 @@
     document.getElementById('c-records').textContent = fmtNum(filtered.length);
     document.getElementById('c-models').textContent = fmtNum(models.size);
     document.getElementById('c-platforms').textContent = fmtNum(platforms.size);
-    // 实时显示当前展示账单的日期范围
+    // 筛选区第一行右侧: 日期范围 · 平台数 · 模型数 (已筛选提示)
     document.getElementById('date-hint').textContent =
-      dates.length ? `当前: ${dates[0]} ~ ${dates[dates.length - 1]}` : '当前: 无数据';
-    document.getElementById('subtitle').textContent =
       (dates.length ? dates[0] + ' ~ ' + dates[dates.length - 1] : '暂无数据') +
       ` · ${platforms.size} 个平台 · ${models.size} 个模型` +
       (filtered.length !== ROWS.length ? ` (已筛选 ${filtered.length} / 全部 ${ROWS.length} 条)` : '');

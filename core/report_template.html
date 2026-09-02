@@ -39,6 +39,8 @@
   .filter-actions { display: flex; gap: 8px; }
   .preset { padding: 6px 10px; border: 1px solid var(--border); background: #fff; border-radius: 6px; cursor: pointer; font-size: 12px; }
   .preset:hover { border-color: var(--primary); color: var(--primary); }
+  .preset.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .date-hint { font-size: 12px; color: var(--muted); align-self: center; }
   .btn { padding: 6px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: var(--primary); color: #fff; }
   .btn.secondary { background: #e5e7eb; color: #374151; }
   .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
@@ -71,11 +73,15 @@
       <div class="filter-item"><label>开始日期</label><input type="date" id="f-start"></div>
       <div class="filter-item"><label>结束日期</label><input type="date" id="f-end"></div>
       <div class="filter-item"><label>快速区间</label><div style="display:flex;gap:4px;" id="quick-presets">
-        <button type="button" class="preset" data-months="1">近1月</button>
-        <button type="button" class="preset" data-months="3">近3月</button>
-        <button type="button" class="preset" data-months="6">近6月</button>
-        <button type="button" class="preset" data-months="12">近1年</button>
+        <button type="button" class="preset" data-range="7d">近1周</button>
+        <button type="button" class="preset" data-range="1m">近1月</button>
+        <button type="button" class="preset" data-range="3m">近3月</button>
+        <button type="button" class="preset" data-range="6m">近6月</button>
+        <button type="button" class="preset" data-range="1y">近1年</button>
       </div></div>
+      <span class="date-hint" id="date-hint"></span>
+    </div>
+    <div class="filter-row" style="margin-top:10px;">
       <div class="filter-item"><label>平台</label><select id="f-platform"><option value="">全部</option></select></div>
       <div class="filter-item"><label>项目</label><select id="f-project"><option value="">全部</option></select></div>
       <div class="filter-item"><label>模型</label><select id="f-model"><option value="">全部</option></select></div>
@@ -268,17 +274,20 @@
 
   function periodSum(rows, valueKey, gran) {
     const map = new Map();
+    let minDate = '', maxDate = '';
     for (const r of rows) {
       const p = String(r.bill_start).slice(0, 10);
       if (!p) continue;
       const key = periodKey(new Date(p + 'T00:00:00'), gran);
       map.set(key, (map.get(key) || 0) + Number(r[valueKey] || 0));
+      if (!minDate || p < minDate) minDate = p;
+      if (!maxDate || p > maxDate) maxDate = p;
     }
     // 逐日推进补齐空缺时段 (无 API 使用的日/周/月计 0)
-    const dates = [...map.keys()].sort();
-    if (!dates.length) return { keys: [], values: [] };
-    const start = new Date(dates[0] + 'T00:00:00');
-    const end = new Date(dates[dates.length - 1] + 'T00:00:00');
+    // 注意: 起止必须用原始日期, 不能用时段键 (如 2026-W18 不是合法日期)
+    if (!minDate) return { keys: [], values: [] };
+    const start = new Date(minDate + 'T00:00:00');
+    const end = new Date(maxDate + 'T00:00:00');
     const keys = [], values = [];
     for (let d = start; d <= end; d.setDate(d.getDate() + 1)) {
       const k = periodKey(d, gran);
@@ -330,6 +339,9 @@
     document.getElementById('c-records').textContent = fmtNum(filtered.length);
     document.getElementById('c-models').textContent = fmtNum(models.size);
     document.getElementById('c-platforms').textContent = fmtNum(platforms.size);
+    // 实时显示当前展示账单的日期范围
+    document.getElementById('date-hint').textContent =
+      dates.length ? `当前: ${dates[0]} ~ ${dates[dates.length - 1]}` : '当前: 无数据';
     document.getElementById('subtitle').textContent =
       (dates.length ? dates[0] + ' ~ ' + dates[dates.length - 1] : '暂无数据') +
       ` · ${platforms.size} 个平台 · ${models.size} 个模型` +
@@ -551,11 +563,11 @@
   }
 
   function resetFilters() {
-    ['f-start', 'f-end', 'f-keyword'].forEach(id => document.getElementById(id).value = '');
+    ['f-keyword'].forEach(id => document.getElementById(id).value = '');
     ['f-platform', 'f-project', 'f-model', 'f-type'].forEach(id => {
       const s = document.getElementById(id); s.selectedIndex = 0;
     });
-    applyFilters();
+    applyPreset('1m');  // 默认区间: 近1月
   }
 
   function buildOptions(selId, key) {
@@ -675,30 +687,52 @@
     });
   });
 
-  // 快速区间预设: 以数据中最晚日期为基准, 向前推 N 个月
+  // 快速区间预设: 以数据中最晚日期为基准向前推; 默认 近1月
   function fmtDate(d) {
     const p = n => String(n).padStart(2, '0');
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   }
-  document.querySelectorAll('#quick-presets .preset').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const maxDate = ROWS.reduce((m, r) => {
-        const d = String(r.bill_start).slice(0, 10);
-        return d > m ? d : m;
-      }, '');
-      if (!maxDate) return;
-      const d = new Date(maxDate + 'T00:00:00');
-      d.setMonth(d.getMonth() - Number(btn.dataset.months));
-      d.setDate(d.getDate() + 1);  // 补回端点, 区间恰好 N 个月
-      document.getElementById('f-start').value = fmtDate(d);
-      document.getElementById('f-end').value = maxDate;
-      applyFilters();
+
+  function maxBillDate() {
+    return ROWS.reduce((m, r) => {
+      const d = String(r.bill_start).slice(0, 10);
+      return d > m ? d : m;
+    }, '');
+  }
+
+  function markPreset(range) {
+    document.querySelectorAll('#quick-presets .preset').forEach(b => {
+      b.classList.toggle('active', b.dataset.range === range);
     });
+  }
+
+  function applyPreset(range) {
+    const maxDate = maxBillDate();
+    if (!maxDate) { markPreset(range); return; }
+    const d = new Date(maxDate + 'T00:00:00');
+    if (range === '7d') {
+      d.setDate(d.getDate() - 7);
+    } else {
+      const months = { '1m': 1, '3m': 3, '6m': 6, '1y': 12 }[range] || 1;
+      d.setMonth(d.getMonth() - months);
+    }
+    d.setDate(d.getDate() + 1);  // 补回端点, 区间恰好 N 天/月
+    document.getElementById('f-start').value = fmtDate(d);
+    document.getElementById('f-end').value = maxDate;
+    markPreset(range);
+    applyFilters();
+  }
+
+  document.querySelectorAll('#quick-presets .preset').forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.range));
   });
 
   // 筛选: 下拉/日期即时生效, 关键词回车或点按钮
   ['f-start', 'f-end', 'f-platform', 'f-project', 'f-model', 'f-type'].forEach(id => {
-    document.getElementById(id).addEventListener('change', applyFilters);
+    document.getElementById(id).addEventListener('change', () => {
+      if (id === 'f-start' || id === 'f-end') markPreset(null);  // 手动改日期取消预设高亮
+      applyFilters();
+    });
   });
   document.getElementById('f-keyword').addEventListener('keydown', e => {
     if (e.key === 'Enter') applyFilters();
@@ -720,7 +754,7 @@
   buildOptions('f-project', 'project');
   buildOptions('f-model', 'model');
   buildOptions('f-type', 'type');
-  renderAll();
+  applyPreset('1m');  // 初始默认区间: 近1月
   </script>
 </body>
 </html>

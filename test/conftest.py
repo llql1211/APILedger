@@ -20,6 +20,8 @@ if PROJECT_ROOT not in sys.path:
 from core.db import Database  # noqa: E402
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+# 测试夹具文件 (csv/xlsx) 存放于项目根目录的 test_csv/
+FIXTURE_DIR = os.path.join(os.path.dirname(TEST_DIR), "test_csv")
 
 
 @pytest.fixture
@@ -94,5 +96,5 @@ def deepseek_csv(tmp_path):
     import shutil
 
     dst = os.path.join(str(tmp_path), "deepseek_2026-06-01_2026-07-01.csv")
-    shutil.copy(os.path.join(TEST_DIR, "test_deepseek.csv"), dst)
+    shutil.copy(os.path.join(FIXTURE_DIR, "test_deepseek.csv"), dst)
     return dst

@@ -162,7 +162,8 @@ class TestTwoPhaseImport:
         import shutil
 
         # deepseek_csv fixture 每次生成副本, 这里手动放两次 (首次导入会归档移走)
-        src = os.path.join(os.path.dirname(__file__), "test_deepseek.csv")
+        from conftest import FIXTURE_DIR
+        src = os.path.join(FIXTURE_DIR, "test_deepseek.csv")
         target = str(tmp_path / "deepseek_2026-06-01_2026-07-01.csv")
         shutil.copy(src, target)
 

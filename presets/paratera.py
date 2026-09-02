@@ -72,6 +72,10 @@ def parse_row(raw_row: dict, mapped_row: dict) -> dict | None:
     mapped_row:  COLUMN_MAPPING 已提取的字段
     返回合并后的 row。配置描述解析失败则返回 None 跳过该行。
     """
+    # 跳过未结算账单 (结算中: 金额为 0; 待 "已结算" 账单出来后再导入, 避免污染统计)
+    if str(raw_row.get("结算状态", "")).strip() == "结算中":
+        return None
+
     desc = str(raw_row.get("配置描述", "")).strip()
     m = DESC_RE.match(desc)
     if not m:

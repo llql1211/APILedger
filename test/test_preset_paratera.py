@@ -37,6 +37,15 @@ class TestParseRow:
         """缓存存储免费, 不导入"""
         assert paratera.parse_row({"配置描述": "缓存存储:123tokens"}, {"cost": 0.0}) is None
 
+    def test_settling_status_skipped(self, paratera):
+        """结算状态为 结算中 的行不导入 (金额为 0, 避免污染统计)"""
+        base = {"配置描述": "输入:1,000tokens", "费用(元)": "0.0", "结算状态": "结算中"}
+        assert paratera.parse_row(base, {"cost": 0.0}) is None
+        # 已结算正常导入
+        settled = dict(base, 结算状态="已结算")
+        row = paratera.parse_row(settled, {"cost": 0.5})
+        assert row is not None and row["tokens"] == 1000
+
     def test_unparseable_desc_skipped(self, paratera):
         assert paratera.parse_row({"配置描述": "garbage"}, {"cost": 0.0}) is None
         assert paratera.parse_row({"配置描述": ""}, {"cost": 0.0}) is None

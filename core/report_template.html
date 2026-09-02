@@ -136,14 +136,6 @@
       </div>
       <div id="chart-modelpie" class="chart"></div>
     </div>
-    <div class="chart-box">
-      <h3><span id="t-typepie">Token 类型分布</span></h3>
-      <div class="chart-tabs" id="tabs-typepie">
-        <button data-m="tokens" class="active">Tokens</button>
-        <button data-m="cost">费用</button>
-      </div>
-      <div id="chart-typepie" class="chart"></div>
-    </div>
   </div>
 
   <!-- 明细表 -->
@@ -192,7 +184,7 @@
 
   // 图表实例与指标状态
   const charts = {};
-  const pieMetric = { platform: 'cost', modelpie: 'tokens', typepie: 'tokens', stack: 'tokens' };
+  const pieMetric = { platform: 'cost', modelpie: 'tokens', stack: 'tokens' };
   let trendGran = '日';
 
   // 类型归并: 预设价格推断可能产生 "输入(缓存命中)" 等类型名, 统一归入三桶
@@ -434,15 +426,6 @@
     renderPie('chart-modelpie', groupSum(filtered, 'model', pieMetric.modelpie), pieMetric.modelpie);
   }
 
-  // ── 模型内 Token 类型分布 (跟随模型筛选) ──
-  function renderTypePie() {
-    const mf = document.getElementById('f-model').value;
-    document.getElementById('t-typepie').textContent =
-      mf ? `模型「${mf}」的 Token 类型分布`
-         : 'Token 类型分布 (全部模型)';
-    renderPie('chart-typepie', groupSum(filtered, 'type', pieMetric.typepie), pieMetric.typepie);
-  }
-
   // ── 模型费用柱状图 Top-15 ──
   function renderModelBar() {
     const el = document.getElementById('chart-model');
@@ -539,7 +522,6 @@
     renderModelBar();
     renderStack();
     renderModelPie();
-    renderTypePie();
   }
 
   // ═══════════════════════════════════════════
@@ -681,7 +663,6 @@
   // 饼图/堆叠图指标切换
   [['tabs-platform', 'platform', renderPlatform],
    ['tabs-modelpie', 'modelpie', renderModelPie],
-   ['tabs-typepie', 'typepie', renderTypePie],
    ['tabs-stack', 'stack', renderStack]].forEach(([tabsId, key, render]) => {
     document.querySelectorAll('#' + tabsId + ' button').forEach(btn => {
       btn.addEventListener('click', () => {

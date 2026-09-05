@@ -212,7 +212,7 @@
   function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtTokensM(v); }
 
   // 单价吸附: 账单按请求取整导致计算单价微偏 (如 2.01), 与该账单日期生效的
-  // 官方价相对误差 ≤2% 时按官方价显示 (如 2.00)。原始值仍在数据库, 仅展示吸附。
+  // 官方价相对误差 ≤5% 时按官方价显示 (如 2.00)。原始值仍在数据库, 仅展示吸附。
   // 同一模型不同时段价格不同 → 预设 PRICING 用 history 表达, 此处按日期解析。
   const PRICE_TABLE = DATA.pricing || {};
 
@@ -244,16 +244,20 @@
     const official = prices[t.includes('缓存') ? 'input_hit'
                           : t.includes('输出') ? 'output' : 'input_miss'];
     if (official == null) return { value: v, snapped: false, hint: '官方价表缺少该类型单价' };
-    if (Math.abs(v - official) <= official * 0.02) return { value: official, snapped: true, hint: '' };
-    return { value: v, snapped: false, hint: `与官方价 ¥${official}/M 偏差超 2%, 未吸附` };
+    if (Math.abs(v - official) <= official * 0.05) return { value: official, snapped: true, hint: '' };
+    return { value: v, snapped: false, hint: `与官方价 ¥${official}/M 偏差超 5%, 未吸附` };
   }
 
-  // 明细表单价单元格: 未吸附追加 * (悬停显示原因)
+  // 明细表单价单元格: 2 位小数; 吸附到预设价且预设价多于 2 位小数时按预设精度原样显示;
+  // 未吸附追加 * (悬停显示原因)
   function priceCell(row) {
     if (!row.unit_price) return '-';
     const sp = snapUnitPrice(row);
-    return sp.snapped ? fmtCost(sp.value)
-         : fmtCost(sp.value) + `<span class="unsnap" title="${sp.hint}">*</span>`;
+    if (!sp.snapped)
+      return '¥' + Number(sp.value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+           + `<span class="unsnap" title="${sp.hint}">*</span>`;
+    const dec = (String(sp.value).split('.')[1] || '').length;
+    return '¥' + Number(sp.value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: Math.max(2, dec) });
   }
 
   // ═══════════════════════════════════════════

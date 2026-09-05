@@ -548,12 +548,10 @@
     const totalOf = g => metric === 'cost' ? g.costTotal : g.tokenTotal;
     // 均价 (元/1M tokens): Σ(每行吸附后单价 × tokens) / Σtokens, 按行日期取当期官方价,
     // 跨价格时段自然得到加权均价; 无官方价的行走原始单价 (等价于 费用/tokens)
-    // 组内存在未吸附行时, 均价末尾标 * (tooltip 说明)
     const avgRateText = g => {
       if (!g.tokenTotal) return '';
       const rate = g.priceCost / g.tokenTotal;
-      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) + '/M'
-           + (g.unsnapped ? '*' : '');
+      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '/M';
     };
     // 行内最顶端的非零段右侧显示均价标签 (只在该段处标注一次)
     const labelFor = (bucketIdx) => ({

@@ -40,6 +40,7 @@
   .preset:hover { border-color: var(--primary); color: var(--primary); }
   .preset.active { background: var(--primary); color: #fff; border-color: var(--primary); }
   .date-hint { font-size: 12px; color: var(--muted); align-self: center; }
+  .unsnap { color: #e8a838; font-weight: bold; cursor: help; }
   .btn { padding: 6px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: var(--primary); color: #fff; }
   .btn.secondary { background: #e5e7eb; color: #374151; }
   .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
@@ -125,7 +126,7 @@
       <div id="chart-model" class="chart"></div>
     </div>
     <div class="chart-box">
-      <h3>模型 token 构成对比 <span class="hint">(每行 100% · 平台×模型 · 右侧为每 1M token 均价)</span></h3>
+      <h3>模型 token 构成对比 <span class="hint">(每行 100% · 平台×模型 · 右侧为每 1M token 均价 · * = 含未匹配官方价的行)</span></h3>
       <div class="chart-tabs" id="tabs-stack">
         <button data-m="tokens" class="active">Token 类型</button>
         <button data-m="cost">费用</button>
@@ -146,6 +147,7 @@
   <div class="table-wrap">
     <div class="table-meta">
       <span id="table-count">共 0 条</span>
+      <span style="font-size:11px;">单价标 <span class="unsnap">*</span> = 未匹配预设官方价 (悬停查看原因)</span>
       <div class="pagination">
         <button onclick="changePage(-1)" id="btn-prev">‹ 上一页</button>
         <span id="page-info">1 / 1</span>
@@ -203,7 +205,7 @@
   // 格式化工具
   // ═══════════════════════════════════════════
   function fmtNum(v) { return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 2 }); }
-  function fmtCost(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }); }
+  function fmtCost(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 4, maximumFractionDigits: 4 }); }
   function fmtCost2(v) { return '¥' + Number(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fmtTokensM(v) { return (Number(v) / 1e6).toLocaleString('zh-CN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + ' M'; }
   // 表格之外的 tokens 展示统一用 M; 费用保留 4 位 (表格内明细用)
@@ -232,16 +234,26 @@
   }
 
   // 单行单价吸附: 按行类型选对应官方价 (缓存输入→hit, 输出→output, 其余→miss)
+  // 返回 { value, snapped, hint }; 未吸附时 hint 说明原因, 展示层标 * 提示
   function snapUnitPrice(row) {
     const v = Number(row.unit_price || 0);
-    if (!v) return v;
+    if (!v) return { value: v, snapped: false, hint: '' };
     const prices = officialPrice(row.model, String(row.bill_start).slice(0, 10));
-    if (!prices) return v;
+    if (!prices) return { value: v, snapped: false, hint: '该模型未配置官方价表' };
     const t = String(row.type || '');
     const official = prices[t.includes('缓存') ? 'input_hit'
                           : t.includes('输出') ? 'output' : 'input_miss'];
-    if (official == null) return v;
-    return Math.abs(v - official) <= official * 0.02 ? official : v;
+    if (official == null) return { value: v, snapped: false, hint: '官方价表缺少该类型单价' };
+    if (Math.abs(v - official) <= official * 0.02) return { value: official, snapped: true, hint: '' };
+    return { value: v, snapped: false, hint: `与官方价 ¥${official}/M 偏差超 2%, 未吸附` };
+  }
+
+  // 明细表单价单元格: 未吸附追加 * (悬停显示原因)
+  function priceCell(row) {
+    if (!row.unit_price) return '-';
+    const sp = snapUnitPrice(row);
+    return sp.snapped ? fmtCost(sp.value)
+         : fmtCost(sp.value) + `<span class="unsnap" title="${sp.hint}">*</span>`;
   }
 
   // ═══════════════════════════════════════════
@@ -280,7 +292,7 @@
       const label = r.platform ? `${r.platform} · ${r.model || '(空)'}` : (r.model || '(空)');
       let g = map.get(label);
       if (!g) {
-        g = { label, tokens: new Map(), cost: new Map(), tokenTotal: 0, costTotal: 0, priceCost: 0 };
+        g = { label, tokens: new Map(), cost: new Map(), tokenTotal: 0, costTotal: 0, priceCost: 0, unsnapped: 0 };
         map.set(label, g);
       }
       const tokens = Number(r.tokens || 0);
@@ -289,7 +301,9 @@
       g.cost.set(bucket, (g.cost.get(bucket) || 0) + Number(r.cost || 0));
       g.tokenTotal += tokens;
       g.costTotal += Number(r.cost || 0);
-      g.priceCost += snapUnitPrice(r) * tokens;
+      const sp = snapUnitPrice(r);
+      g.priceCost += sp.value * tokens;
+      if (!sp.snapped) g.unsnapped += 1;
     }
     return [...map.values()]
       .filter(g => g.tokenTotal > 0 || g.costTotal > 0)
@@ -418,7 +432,7 @@
       yAxis: [
         { type: 'value', name: '费用(¥)', axisLabel: { fontSize: 10 } },
         { type: 'value', name: 'Tokens(M)', splitLine: { show: false },
-          axisLabel: { fontSize: 10, formatter: v => (v / 1e6).toLocaleString('zh-CN', { maximumFractionDigits: 2 }) } },
+          axisLabel: { fontSize: 10, formatter: v => (v / 1e6).toLocaleString('zh-CN', { maximumFractionDigits: 3 }) } },
       ],
       series: [
         {
@@ -507,10 +521,12 @@
     const totalOf = g => metric === 'cost' ? g.costTotal : g.tokenTotal;
     // 均价 (元/1M tokens): Σ(每行吸附后单价 × tokens) / Σtokens, 按行日期取当期官方价,
     // 跨价格时段自然得到加权均价; 无官方价的行走原始单价 (等价于 费用/tokens)
+    // 组内存在未吸附行时, 均价末尾标 * (tooltip 说明)
     const avgRateText = g => {
       if (!g.tokenTotal) return '';
       const rate = g.priceCost / g.tokenTotal;
-      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '/M';
+      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) + '/M'
+           + (g.unsnapped ? '*' : '');
     };
     // 行内最顶端的非零段右侧显示均价标签 (只在该段处标注一次)
     const labelFor = (bucketIdx) => ({
@@ -549,10 +565,14 @@
             const abs = g ? (g[bucketMap].get(p.seriesName) || 0) : 0;
             s += '<br>' + p.marker + ' ' + p.seriesName + ': ' + fmtMetric(abs, metric) + ' (' + p.value + '%)';
           }
-          // 末尾追加整行均价
+          // 末尾追加整行均价 (含未吸附行时说明数量)
           const g = groups[groups.length - 1 - params[0].dataIndex];
-          const avg = g ? avgRateText(g) : '';
-          return s + (avg ? '<br><span style="color:#6b7280">均价: ' + avg + '</span>' : '');
+          if (!g) return s;
+          let line = '<br><span style="color:#6b7280">均价: ' + avgRateText(g) + '</span>';
+          if (g.unsnapped) {
+            line += '<br><span style="color:#e8a838">' + g.unsnapped + ' 行单价未匹配预设官方价 (标 *)</span>';
+          }
+          return s + line;
         },
       },
       legend: { bottom: 0 },
@@ -672,7 +692,7 @@
         <td>${r.type}</td>
         <td class="num">${fmtNum(r.tokens)}</td>
         <td class="num">${fmtCost(r.cost)}</td>
-        <td class="num">${r.unit_price ? fmtCost(snapUnitPrice(r)) : '-'}</td>
+        <td class="num">${priceCell(r)}</td>
         <td class="muted-cell">${String(r.source_file || '').split(',').map(s => s.trim()).filter(Boolean).join(' ')}</td>`;
       tbody.appendChild(tr);
     }

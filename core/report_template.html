@@ -115,19 +115,11 @@
       <div id="chart-trend" class="chart"></div>
     </div>
     <div class="chart-box">
-      <h3>平台 <span class="hint" id="t-platform-metric">费用</span> 占比</h3>
-      <div class="chart-tabs" id="tabs-platform">
-        <button data-m="cost" class="active">费用</button>
-        <button data-m="tokens">Tokens</button>
-      </div>
-      <div id="chart-platform" class="chart"></div>
-    </div>
-    <div class="chart-box">
-      <h3>模型 Token / 费用对比 <span class="hint">(全部模型 · 按 Token 降序)</span></h3>
+      <h3>模型 Token / 费用对比 <span class="hint"></span></h3>
       <div id="chart-model" class="chart"></div>
     </div>
     <div class="chart-box">
-      <h3>模型 token 构成对比 <span class="hint">(每行 100% · 平台×模型 · 右侧为每 1M token 均价 · * = 含未匹配官方价的行)</span></h3>
+      <h3>模型 Token / 费用构成对比 <span class="hint">(右侧为每 1M Tokens 均价，* 表示有未匹配官方价的记录)</span></h3>
       <div class="chart-tabs" id="tabs-stack">
         <button data-m="tokens" class="active">Token 类型</button>
         <button data-m="cost">费用</button>
@@ -189,7 +181,7 @@
 
   // 图表实例与指标状态
   const charts = {};
-  const pieMetric = { platform: 'cost', stack: 'tokens' };
+  const pieMetric = { stack: 'tokens' };
   let trendGran = '日';
 
   // 类型归并: 预设价格推断可能产生 "输入(缓存命中)" 等类型名, 统一归入三桶
@@ -468,34 +460,6 @@
     }, true);
   }
 
-  // ═══════════════════════════════════════════
-  // 通用饼图
-  // ═══════════════════════════════════════════
-  function renderPie(id, groups, metric) {
-    const el = document.getElementById(id);
-    if (!groups.length) { showEmpty(el, '当前筛选无数据'); return; }
-    const chart = getChart(id, el);
-    if (!chart) return;
-    const data = groups.map(d => ({ name: d.name, value: d.value }));
-    chart.setOption({
-      tooltip: {
-        trigger: 'item',
-        formatter: p => `${p.name}: ${fmtMetric(p.value, metric)} (${p.percent}%)`,
-      },
-      legend: { bottom: 0, type: 'scroll' },
-      series: [{
-        type: 'pie', radius: ['35%', '65%'], data,
-        label: { formatter: '{b}\n{d}%', fontSize: 11 },
-        color: CHART_COLORS,
-      }],
-    }, true);
-  }
-
-  // ── 平台占比 ──
-  function renderPlatform() {
-    renderPie('chart-platform', groupSum(filtered, 'platform', pieMetric.platform), pieMetric.platform);
-  }
-
   // ── 模型 Token / 费用对比: 全部模型, 每模型两根横向条 (上 Token 下费用, 双轴各自缩放) ──
   function renderModelBar() {
     const el = document.getElementById('chart-model');
@@ -630,7 +594,6 @@
 
   function renderCharts() {
     renderTrend();
-    renderPlatform();
     renderModelBar();
     renderStack();
   }
@@ -776,15 +739,13 @@
     });
   });
 
-  // 饼图/堆叠图指标切换
-  [['tabs-platform', 'platform', renderPlatform],
-   ['tabs-stack', 'stack', renderStack]].forEach(([tabsId, key, render]) => {
+  // 堆叠图指标切换
+  [['tabs-stack', 'stack', renderStack]].forEach(([tabsId, key, render]) => {
     document.querySelectorAll('#' + tabsId + ' button').forEach(btn => {
       btn.addEventListener('click', () => {
         document.querySelectorAll('#' + tabsId + ' button').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         pieMetric[key] = btn.dataset.m;
-        if (key === 'platform') document.getElementById('t-platform-metric').textContent = btn.dataset.m === 'cost' ? '费用' : 'Tokens';
         render();
       });
     });

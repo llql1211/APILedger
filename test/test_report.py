@@ -67,13 +67,14 @@ class TestBuildHtml:
             assert f'id="{fid}"' in html
 
     def test_chart_containers_present(self, seeded_db):
-        """全部图表容器齐全 (趋势/平台/模型双条/构成堆叠)"""
+        """全部图表容器齐全 (趋势/模型双条/构成堆叠)"""
         html = build_html(seeded_db)
-        for cid in ("chart-trend", "chart-platform", "chart-model", "chart-stack"):
+        for cid in ("chart-trend", "chart-model", "chart-stack"):
             assert f'id="{cid}"' in html
-        # 类型分布饼图、模型分布饼图已删除 (并入模型 Token/费用对比图)
+        # 类型分布饼图、模型分布饼图、平台占比饼图已删除
         assert 'chart-typepie' not in html
         assert 'chart-modelpie' not in html
+        assert 'chart-platform' not in html
 
 
 class TestExportReport:

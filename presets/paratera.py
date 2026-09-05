@@ -79,9 +79,20 @@ DESC_RE = re.compile(r'^(\S+)\s*:\s*([\d,]+)\s*tokens?\s*$')
 # }
 
 PRICING = {
-    "DeepSeek-V4-Flash": {"input_hit": 0.02, "input_miss": 1.00, "output": 2.00},
+    "DeepSeek-V4-Flash": {
+        "history": [
+            {"until": "2026-08-01", "input_hit": 0.20, "input_miss": 1.00, "output": 2.00},
+            {"until": "2099-12-31", "input_hit": 0.02, "input_miss": 1.00, "output": 2.00},
+        ],
+    },
     "DeepSeek-V4-Flash-Vision-Exp": {"input_hit": 0.10, "input_miss": 3.00, "output": 9.00},
-    "DeepSeek-V4-Pro": {"input_hit": 0.10, "input_miss": 12.00, "output": 24.0},
+    "DeepSeek-V4-Pro": {
+        "history": [
+            # {"until": "2026-06-07", "input_hit": 1.00, "input_miss": 12.00, "output": 24.00},
+            {"until": "2026-08-01", "input_hit": 1.00, "input_miss": 12.00, "output": 24.00},
+            {"until": "2099-12-31", "input_hit": 0.10, "input_miss": 12.00, "output": 24.00},
+        ],
+    },
     "GLM-5": {"input_hit": 1.50, "input_miss": 6.00, "output": 20.00},
     "GLM-5.3-Flash": {"input_hit": 0.115, "input_miss": 0.40, "output": 1.40},
     "Kimi-K2.5": {"input_hit": 0.80, "input_miss": 4.00, "output": 21.00},

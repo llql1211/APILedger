@@ -202,6 +202,20 @@
   // 表格之外的 tokens 展示统一用 M; 费用保留 4 位 (表格内明细用)
   function fmtMetric(v, metric) { return metric === 'cost' ? fmtCost(v) : fmtTokensM(v); }
 
+  // 数轴美观刻度: interval 取 1/2/5×10^n 且 ≥ v/steps, max 为 interval 的整数倍且 ≥ v。
+  // 上限贴近最长条的值, 刻度尽量为整数 (如 v=45.2 → interval 10, max 50)
+  function niceAxis(v, steps = 9) {
+    if (!(v > 0)) return { max: 1, interval: 1 };
+    const raw = v / steps;
+    const base = Math.pow(10, Math.floor(Math.log10(raw)));
+    let interval = 10 * base;
+    for (const m of [1, 2, 5]) {
+      if (m * base >= raw) { interval = m * base; break; }
+    }
+    const max = Math.ceil((v - 1e-9) / interval) * interval;
+    return { max: Number(max.toFixed(10)), interval };
+  }
+
   // 单价吸附: 账单按请求取整导致计算单价微偏 (如 2.01), 与该账单日期生效的
   // 官方价相对误差 ≤5% 时按官方价显示 (如 2.00)。原始值仍在数据库, 仅展示吸附。
   // 同一模型不同时段价格不同 → 预设 PRICING 用 history 表达, 此处按日期解析;
@@ -460,7 +474,8 @@
     }, true);
   }
 
-  // ── 模型 Token / 费用对比: 全部模型, 每模型两根横向条 (上 Token 下费用, 双轴各自缩放) ──
+  // ── 模型 Token / 费用对比: 全部模型, 每模型两根横向条 (上 Token 下费用),
+  // 横轴统一为占总量的百分比 (0-100%), 条右侧标注绝对值 ──
   function renderModelBar() {
     const el = document.getElementById('chart-model');
     if (!filtered.length) { showEmpty(el, '当前筛选无数据'); return; }
@@ -497,23 +512,32 @@
         },
       },
       grid: { left: 130, right: 110, top: 20, bottom: 40 },
-      xAxis: [
-        { type: 'value', axisLabel: { fontSize: 10 } },
-        { type: 'value', axisLabel: { show: false }, splitLine: { show: false } },
-      ],
+      // 横轴上限取最长条附近的整刻度, 不固定 0~100%
+      xAxis: (() => {
+        const maxPct = rows.reduce((m, g) =>
+          Math.max(m, totalTokens ? g.tokens / totalTokens * 100 : 0,
+                       totalCost ? g.cost / totalCost * 100 : 0), 0);
+        const a = niceAxis(maxPct);
+        return { type: 'value', max: a.max, interval: a.interval,
+                 axisLabel: { formatter: '{value}%', fontSize: 10 } };
+      })(),
       yAxis: { type: 'category', data: rows.map(g => g.name), axisLabel: { fontSize: 10 } },
       series: [
         {
-          name: 'Tokens', type: 'bar', data: rows.map(g => g.tokens),
+          name: 'Tokens', type: 'bar',
+          data: rows.map(g => totalTokens ? g.tokens / totalTokens * 100 : 0),
           itemStyle: { color: '#2fa572', borderRadius: [0, 4, 4, 0] },
           barMaxWidth: 12,
-          label: { show: true, position: 'right', formatter: p => fmtTokensM(p.value), fontSize: 10 },
+          label: { show: true, position: 'right',
+                   formatter: p => fmtTokensM(rows[p.dataIndex].tokens), fontSize: 10 },
         },
         {
-          name: '费用', type: 'bar', xAxisIndex: 1, data: rows.map(g => g.cost),
+          name: '费用', type: 'bar',
+          data: rows.map(g => totalCost ? g.cost / totalCost * 100 : 0),
           itemStyle: { color: '#1f538d', borderRadius: [0, 4, 4, 0] },
           barMaxWidth: 12,
-          label: { show: true, position: 'right', formatter: p => fmtCost2(p.value), fontSize: 10 },
+          label: { show: true, position: 'right',
+                   formatter: p => fmtCost2(rows[p.dataIndex].cost), fontSize: 10 },
         },
       ],
     }, true);

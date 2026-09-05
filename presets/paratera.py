@@ -78,6 +78,18 @@ DESC_RE = re.compile(r'^(\S+)\s*:\s*([\d,]+)\s*tokens?\s*$')
 #     "Kimi-K2.5": {"input_hit": 1.0, "input_miss": 3.0, "output": 9.0},  # 无调价可不用 history
 # }
 
+PRICING = {
+    "DeepSeek-V4-Flash": {"input_hit": 0.02, "input_miss": 1.00, "output": 2.00},
+    "DeepSeek-V4-Flash-Vision-Exp": {"input_hit": 0.10, "input_miss": 3.00, "output": 9.00},
+    "DeepSeek-V4-Pro": {"input_hit": 0.10, "input_miss": 12.00, "output": 24.0},
+    "GLM-5": {"input_hit": 1.50, "input_miss": 6.00, "output": 20.00},
+    "GLM-5.3-Flash": {"input_hit": 0.115, "input_miss": 0.40, "output": 1.40},
+    "Kimi-K2.5": {"input_hit": 0.80, "input_miss": 4.00, "output": 21.00},
+    "Qwen3.5-122B-A10B": {"input_hit": 0.20, "input_miss": 2.00, "output": 16.00},
+    "Qwen3.5-35B-A3B": {"input_hit": 0.16, "input_miss": 1.60, "output": 12.80},
+    "Qwen3.6-Plus": {"input_hit": 0.40, "input_miss": 4.00, "output": 24.00},
+}
+
 
 def parse_row(raw_row: dict, mapped_row: dict) -> dict | None:
     """

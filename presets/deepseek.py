@@ -72,6 +72,16 @@ MODEL_MAP = {
 #     },
 # }
 
+PRICING = {
+    "DeepSeek-V4-Flash": {
+        "history": [
+            {"until": "2026-06-30", "input_hit": 0.02, "input_miss": 1.00, "output": 2.00},
+            {"until": "2099-12-31", "input_hit": 0.02, "input_miss": 1.00, "output": 2.00},
+        ],
+    },
+}
+
+
 # utc_date 格式: yyyymmdd (如 20260621) → ISO yyyy-mm-dd
 DATE_RE = re.compile(r'^(\d{4})(\d{2})(\d{2})$')
 

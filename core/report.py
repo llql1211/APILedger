@@ -37,34 +37,38 @@ CHART_COLORS = [
 # 数据提取
 # ═══════════════════════════════════════════════════
 
-def _collect_official_prices() -> Dict[str, Dict[str, Any]]:
+def _collect_official_prices() -> Dict[str, Dict[str, Dict[str, Any]]]:
     """
-    从各平台预设的 PRICING 收集官方单价表 → {模型名: 价格配置}。
+    从各平台预设的 PRICING 收集官方单价表 → {模型名: {平台名: 价格配置}}。
 
     价格配置结构与预设一致:
       {"input_hit": .., "input_miss": .., "output": ..,
        "history": [{"until": "时段截止日", ...价格...}, ...]}
     同一模型不同时段价格不同, 由 history 表达 (until 含当日, 语义与
-    _apply_price_hint 的 type 反推一致)。旧格式 {platform: {model: ...}} 自动摊平。
+    _apply_price_hint 的 type 反推一致); 不同平台同模型价格也可能不同
+    (如 DeepSeek-V4-Flash: DeepSeek 官方 0.02, Paratera 早期 0.20),
+    故按预设归属的平台分组。平台名取预设 DEFAULTS.platform, 缺省用预设名。
+    旧格式 {platform: {model: ...}} 直接按其外层键归组。
 
-    供前端展示层"单价吸附"与终端未吸附提示: 计算单价与该日期生效的官方价
-    相对误差 ≤SNAP_TOLERANCE 时按官方价显示。
+    供前端展示层"单价吸附"与终端未吸附提示: 计算单价与该记录所属平台的
+    价表中该日期生效的官方价相对误差 ≤SNAP_TOLERANCE 时按官方价显示;
+    记录平台无价表时回退合并所有平台。
     """
-    from core.presets import load_all_presets, get_pricing_dict
+    from core.presets import load_all_presets, get_pricing_dict, get_preset_name
 
     price_keys = ("input_hit", "input_miss", "output")
 
     def _iter_model_cfgs(pricing: dict):
-        """产出 (模型名, 价格配置)。兼容新旧两种 PRICING 结构。"""
-        for model, cfg in pricing.items():
+        """产出 (模型名, 价格配置, 平台覆盖)。兼容新旧两种 PRICING 结构。"""
+        for top_key, cfg in pricing.items():
             if not isinstance(cfg, dict):
                 continue
             if any(k in cfg for k in price_keys + ("history",)):
-                yield model, cfg                          # 新格式: model → 价格配置
+                yield top_key, cfg, None                  # 新格式: model → 价格配置
             else:
-                for m2, sub in cfg.items():               # 旧格式: platform → model → 配置
+                for model, sub in cfg.items():            # 旧格式: platform → model → 配置
                     if isinstance(sub, dict):
-                        yield m2, sub
+                        yield model, sub, str(top_key)
 
     def _norm_cfg(cfg) -> dict:
         out: Dict[str, Any] = {}
@@ -80,13 +84,18 @@ def _collect_official_prices() -> Dict[str, Dict[str, Any]]:
             out["history"] = hist
         return out
 
-    merged: Dict[str, Dict[str, Any]] = {}
+    merged: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for preset in load_all_presets():
-        for model, cfg in _iter_model_cfgs(get_pricing_dict(preset)):
+        defaults = getattr(preset, "DEFAULTS", None)
+        preset_platform = str(defaults.get("platform", "") or "") \
+            if isinstance(defaults, dict) else ""
+        if not preset_platform:
+            preset_platform = get_preset_name(preset)
+        for model, cfg, plat in _iter_model_cfgs(get_pricing_dict(preset)):
             norm = _norm_cfg(cfg)
             if not norm:
                 continue
-            dst = merged.setdefault(model, {})
+            dst = merged.setdefault(model, {}).setdefault(plat or preset_platform, {})
             for k, v in norm.items():
                 if k == "history":
                     dst.setdefault("history", []).extend(v)
@@ -144,7 +153,9 @@ SNAP_TOLERANCE = 0.05
 
 
 def _price_at(cfg: Dict[str, Any], date_str: str) -> Dict[str, float]:
-    """解析某账单日期生效的官方价, until 含当日 (语义与前端 officialPrice 一致)"""
+    """解析某账单日期生效的官方价: history 自日期早向日期晚,
+    取 until ≥ 日期中最小的 (即日期真正落在的时段; until 含当日,
+    语义与导入侧 _apply_price_hint 及前端 officialPrice 一致)"""
     best = None
     for h in cfg.get("history") or []:
         until = str(h.get("until", ""))
@@ -162,13 +173,31 @@ def _price_at(cfg: Dict[str, Any], date_str: str) -> Dict[str, float]:
     return out
 
 
+def _cfg_for_platform(model_prices: Dict[str, Dict[str, Any]], platform: str) -> Dict[str, Any]:
+    """取记录所属平台的价表; 该平台未配置时回退合并所有平台 (与前端一致)"""
+    cfg = model_prices.get(platform)
+    if cfg is not None:
+        return cfg
+    merged: Dict[str, Any] = {}
+    for sub in model_prices.values():
+        if not isinstance(sub, dict):
+            continue
+        for k in ("input_hit", "input_miss", "output"):
+            if merged.get(k) is None and sub.get(k) is not None:
+                merged[k] = sub[k]
+        if sub.get("history"):
+            merged.setdefault("history", []).extend(sub["history"])
+    return merged
+
+
 def unsnapped_price_groups(db: Database) -> list:
     """
     找出未吸附到预设官方价的账单, 按 (模型, 类型, 原因) 分组计数。
 
-    判定与前端 snapUnitPrice 一致: 模型 × 账单日期 × 类型 (缓存输入→input_hit,
-    输出→output, 其余→input_miss), 相对误差 ≤SNAP_TOLERANCE 视为吸附。
-    零单价行不展示单价, 不参与提示; 全库未配置任何官方价表时返回空 (无从比对)。
+    判定与前端 snapUnitPrice 一致: 模型 × 平台 × 账单日期 × 类型
+    (缓存输入→input_hit, 输出→output, 其余→input_miss), 相对误差
+    ≤SNAP_TOLERANCE 视为吸附。零单价行不展示单价, 不参与提示;
+    全库未配置任何官方价表时返回空 (无从比对)。
 
     返回 [{"model", "type", "reason", "count", "price_range"}, ...]
     """
@@ -183,10 +212,11 @@ def unsnapped_price_groups(db: Database) -> list:
             continue
         model = r.get("model", "")
         rtype = r.get("type", "")
-        cfg = prices.get(model)
-        if not cfg:
+        model_prices = prices.get(model)
+        if not model_prices:
             reason = "未配置官方价表"
         else:
+            cfg = _cfg_for_platform(model_prices, r.get("platform", ""))
             p = _price_at(cfg, str(r.get("date", "") or "")[:10])
             if not p:
                 reason = "该日期无生效官方价"

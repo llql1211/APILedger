@@ -94,37 +94,37 @@ class TestExportReport:
 
 
 class TestOfficialPrices:
-    """展示层单价吸附: 预设 PRICING (含 history 时段价) → 报告内嵌官方价表"""
+    """展示层单价吸附: 预设 PRICING (按平台分组, 含 history 时段价) → 报告内嵌官方价表"""
 
-    def _fake_preset(self, pricing):
+    def _fake_preset(self, pricing, platform="Paratera"):
         import types
-        return types.SimpleNamespace(PRICING=pricing)
+        return types.SimpleNamespace(PRICING=pricing, DEFAULTS={"platform": platform})
 
-    def test_collect_keeps_history_structure(self, monkeypatch):
+    def test_collect_groups_by_platform(self, monkeypatch):
         import core.report as report
         pricing = {"GLM-5": {"history": [
             {"until": "2026-08-31", "input_hit": 1.0, "input_miss": 3.0, "output": 9.0},
             {"until": "2099-12-31", "input_hit": 1.2, "input_miss": 3.5, "output": 10.0},
         ]}}
         monkeypatch.setattr("core.presets.load_all_presets",
-                            lambda: [self._fake_preset(pricing)])
+                            lambda: [self._fake_preset(pricing, "Paratera")])
         prices = report._collect_official_prices()
-        assert prices["GLM-5"]["history"] == pricing["GLM-5"]["history"]
+        assert prices["GLM-5"]["Paratera"]["history"] == pricing["GLM-5"]["history"]
 
-    def test_collect_flattens_old_format(self, monkeypatch):
+    def test_collect_old_format_keeps_platform(self, monkeypatch):
         import core.report as report
         pricing = {"Paratera": {"GLM-5": {"input_miss": 3.0, "output": 9.0}}}
         monkeypatch.setattr("core.presets.load_all_presets",
                             lambda: [self._fake_preset(pricing)])
         prices = report._collect_official_prices()
-        assert prices["GLM-5"] == {"input_miss": 3.0, "output": 9.0}
+        assert prices["GLM-5"]["Paratera"] == {"input_miss": 3.0, "output": 9.0}
 
     def test_pricing_embedded_in_html(self, seeded_db, monkeypatch):
         import core.report as report
         monkeypatch.setattr(report, "_collect_official_prices",
-                            lambda: {"GLM-5": {"input_miss": 3.0, "output": 9.0}})
+                            lambda: {"GLM-5": {"Paratera": {"input_miss": 3.0, "output": 9.0}}})
         data = json.loads(_extract_data(build_html(seeded_db)))
-        assert data["pricing"]["GLM-5"]["output"] == 9.0
+        assert data["pricing"]["GLM-5"]["Paratera"]["output"] == 9.0
 
     def test_empty_pricing_still_embeds(self, seeded_db, monkeypatch):
         import core.report as report
@@ -149,7 +149,7 @@ class TestUnsnappedPrices:
 
     def test_zero_price_rows_ignored(self, monkeypatch):
         # 零单价行不展示单价, 不参与提示
-        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0}})
+        self._patch(monkeypatch, {"GLM-5": {"Paratera": {"input_miss": 3.0}}})
         rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 0.0}]
         assert unsnapped_price_groups(_FakeDb(rows)) == []
 
@@ -161,13 +161,36 @@ class TestUnsnappedPrices:
 
     def test_within_tolerance_snapped(self, monkeypatch):
         # 3.06 vs 官方价 3.0 → 偏差 2% ≤5% → 吸附, 无提示
-        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0, "output": 9.0}})
+        self._patch(monkeypatch, {"GLM-5": {"Paratera": {"input_miss": 3.0, "output": 9.0}}})
         rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 3.06}]
+        assert unsnapped_price_groups(_FakeDb(rows)) == []
+
+    def test_platform_aware_resolution(self, monkeypatch):
+        # 同模型两平台价格不同: 6 月 Paratera 0.2 / DeepSeek 0.02。
+        # 若不按平台分组, 6 月日期会命中 DeepSeek 的 0.02 → Paratera 行误报未吸附
+        pricing = {"M": {
+            "DeepSeek": {"history": [{"until": "2026-06-30", "input_hit": 0.02},
+                                     {"until": "2099-12-31", "input_hit": 0.02}]},
+            "Paratera": {"history": [{"until": "2026-08-01", "input_hit": 0.2},
+                                     {"until": "2099-12-31", "input_hit": 0.02}]},
+        }}
+        self._patch(monkeypatch, pricing)
+        rows = [{"date": "2026-06-01", "platform": "Paratera", "model": "M",
+                 "type": "缓存输入", "unit_price": 0.2},
+                {"date": "2026-06-02", "platform": "DeepSeek", "model": "M",
+                 "type": "缓存输入", "unit_price": 0.02}]
+        assert unsnapped_price_groups(_FakeDb(rows)) == []
+
+    def test_platform_fallback_merges_all(self, monkeypatch):
+        # 记录平台不在价表中 → 回退合并所有平台的配置
+        self._patch(monkeypatch, {"M": {"Paratera": {"input_miss": 3.0}}})
+        rows = [{"date": "2026-08-03", "platform": "Other", "model": "M",
+                 "type": "输入", "unit_price": 3.06}]
         assert unsnapped_price_groups(_FakeDb(rows)) == []
 
     def test_deviation_beyond_tolerance(self, monkeypatch):
         # 3.2 vs 3.0 → 偏差 6.7% >5% → 未吸附, 按模型/类型/原因分组
-        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0, "output": 9.0}})
+        self._patch(monkeypatch, {"GLM-5": {"Paratera": {"input_miss": 3.0, "output": 9.0}}})
         rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 3.2},
                 {"date": "2026-08-04", "model": "GLM-5", "type": "输入", "unit_price": 3.25}]
         groups = unsnapped_price_groups(_FakeDb(rows))
@@ -180,7 +203,7 @@ class TestUnsnappedPrices:
 
     def test_type_key_mapping(self, monkeypatch):
         # 缓存输入→input_hit, 输出→output, 其余→input_miss
-        self._patch(monkeypatch, {"M": {"input_hit": 1.0, "input_miss": 3.0, "output": 9.0}})
+        self._patch(monkeypatch, {"M": {"Paratera": {"input_hit": 1.0, "input_miss": 3.0, "output": 9.0}}})
         rows = [{"date": "2026-08-03", "model": "M", "type": "缓存输入", "unit_price": 1.02},
                 {"date": "2026-08-03", "model": "M", "type": "输出", "unit_price": 10.0},
                 {"date": "2026-08-03", "model": "M", "type": "输入", "unit_price": 3.5}]
@@ -192,7 +215,7 @@ class TestUnsnappedPrices:
         assert by_type["输入"]["reason"].startswith("偏差超 5%")
 
     def test_missing_model_and_type_price(self, monkeypatch):
-        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0}})
+        self._patch(monkeypatch, {"GLM-5": {"Paratera": {"input_miss": 3.0}}})
         rows = [{"date": "2026-08-03", "model": "Unknown", "type": "输出", "unit_price": 5.0},
                 {"date": "2026-08-05", "model": "GLM-5", "type": "输出", "unit_price": 9.0}]
         groups = unsnapped_price_groups(_FakeDb(rows))
@@ -202,14 +225,25 @@ class TestUnsnappedPrices:
 
     def test_history_date_aware(self, monkeypatch):
         # 8 月按旧价 3.0 吸附, 9 月按新价 3.5 吸附 (9 月账单若误用旧价会偏差超差)
-        pricing = {"GLM-5": {"history": [
+        pricing = {"GLM-5": {"Paratera": {"history": [
             {"until": "2026-08-31", "input_miss": 3.0},
             {"until": "2099-12-31", "input_miss": 3.5},
-        ]}}
+        ]}}}
         self._patch(monkeypatch, pricing)
         rows = [{"date": "2026-08-20", "model": "GLM-5", "type": "输入", "unit_price": 3.06},
                 {"date": "2026-09-01", "model": "GLM-5", "type": "输入", "unit_price": 3.58}]
         assert unsnapped_price_groups(_FakeDb(rows)) == []
+
+    def test_history_earliest_until_wins(self, monkeypatch):
+        # history 自日期早向日期晚: until ≥ 日期中最小的时段生效, 与书写顺序无关
+        pricing = {"M": {"Paratera": {"history": [
+            {"until": "2099-12-31", "input_miss": 5.0},   # 书写在前, 但 until 更晚
+            {"until": "2026-08-31", "input_miss": 3.0},   # 6 月账单应落在此时段
+        ]}}}
+        self._patch(monkeypatch, pricing)
+        rows = [{"date": "2026-06-01", "model": "M", "type": "输入", "unit_price": 5.06}]
+        groups = unsnapped_price_groups(_FakeDb(rows))
+        assert len(groups) == 1 and "¥3.0/M" in groups[0]["reason"]
 
 
 def _extract_data(html: str) -> str:

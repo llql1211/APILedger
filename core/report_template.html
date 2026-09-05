@@ -220,15 +220,31 @@
 
   // 单价吸附: 账单按请求取整导致计算单价微偏 (如 2.01), 与该账单日期生效的
   // 官方价相对误差 ≤5% 时按官方价显示 (如 2.00)。原始值仍在数据库, 仅展示吸附。
-  // 同一模型不同时段价格不同 → 预设 PRICING 用 history 表达, 此处按日期解析。
+  // 同一模型不同时段价格不同 → 预设 PRICING 用 history 表达, 此处按日期解析;
+  // 不同平台同模型价格可能不同 → 价表按平台分组, 优先用记录所属平台的配置。
   const PRICE_TABLE = DATA.pricing || {};
 
   // 模型在某日期生效的官方价 {input_hit, input_miss, output}; 无价格表返回 null
-  function officialPrice(model, dateStr) {
+  function officialPrice(model, platform, dateStr) {
     const cfg = PRICE_TABLE[model];
     if (!cfg) return null;
-    let cur = cfg, best = null;
-    for (const h of (cfg.history || [])) {
+    let sub;
+    if (cfg.history || cfg.input_hit != null || cfg.input_miss != null || cfg.output != null) {
+      sub = cfg;                                   // 兼容未按平台分组的内嵌数据
+    } else {
+      sub = cfg[platform];
+      if (!sub) {                                  // 记录平台无价表 → 合并所有平台
+        sub = {};
+        for (const p of Object.keys(cfg)) {
+          const s = cfg[p] || {};
+          for (const k of ['input_hit', 'input_miss', 'output'])
+            if (sub[k] == null && s[k] != null) sub[k] = s[k];
+          if (s.history) sub.history = (sub.history || []).concat(s.history);
+        }
+      }
+    }
+    let cur = sub, best = null;
+    for (const h of (sub.history || [])) {   // 自日期早向日期晚: 取 until ≥ 日期中最小的
       if (dateStr && String(dateStr) <= String(h.until) &&
           (!best || String(h.until) < String(best.until))) best = h;
     }
@@ -245,7 +261,7 @@
   function snapUnitPrice(row) {
     const v = Number(row.unit_price || 0);
     if (!v) return { value: v, snapped: false, hint: '' };
-    const prices = officialPrice(row.model, String(row.bill_start).slice(0, 10));
+    const prices = officialPrice(row.model, row.platform, String(row.bill_start).slice(0, 10));
     if (!prices) return { value: v, snapped: false, hint: '该模型未配置官方价表' };
     const t = String(row.type || '');
     const official = prices[t.includes('缓存') ? 'input_hit'

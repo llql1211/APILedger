@@ -348,11 +348,12 @@ def _apply_price_hint(records: List[Dict[str, Any]], pricing: dict):
         if not price_cfg:
             continue
 
-        # 预设格式支持 history 时间段匹配
+        # 预设格式支持 history 时间段匹配: 自日期早向日期晚,
+        # 取 until ≥ 账单日期中最小的 (即账单真正落在的时段)
         if isinstance(price_cfg, dict) and "history" in price_cfg:
             bill_date = entry.get("bill_start", "")
             history = price_cfg.get("history", [])
-            for h in sorted(history, key=lambda x: str(x.get("until", "")), reverse=True):
+            for h in sorted(history, key=lambda x: str(x.get("until", ""))):
                 if bill_date and bill_date <= str(h.get("until", "")):
                     price_cfg = h
                     break

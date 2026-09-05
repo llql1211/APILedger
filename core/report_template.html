@@ -77,6 +77,7 @@
         <button type="button" class="preset" data-range="3m">近3月</button>
         <button type="button" class="preset" data-range="6m">近6月</button>
         <button type="button" class="preset" data-range="1y">近1年</button>
+        <button type="button" class="preset" data-range="all">全部</button>
       </div></div>
       <span class="date-hint" id="date-hint"></span>
     </div>
@@ -146,7 +147,12 @@
   <!-- 明细表 -->
   <div class="table-wrap">
     <div class="table-meta">
-      <span id="table-count">共 0 条</span>
+      <span style="display:flex;align-items:center;gap:10px;">
+        <span id="table-count">共 0 条</span>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer;">
+          <input type="checkbox" id="f-unsnapped"> 只看未吸附
+        </label>
+      </span>
       <span style="font-size:11px;">单价标 <span class="unsnap">*</span> = 未匹配预设官方价 (悬停查看原因)</span>
       <div class="pagination">
         <button onclick="changePage(-1)" id="btn-prev">‹ 上一页</button>
@@ -186,6 +192,7 @@
   let page = 1;
   let sortKey = null;           // null = 默认复合排序 (平台→项目→日期)
   let sortDir = -1;
+  let onlyUnsnapped = false;    // 明细表"只看未吸附"
   const PAGE_SIZE = 30;
 
   // 图表实例与指标状态
@@ -668,10 +675,15 @@
   }
 
   function renderTable() {
-    const rows = sortedRows();
+    const rowsAll = sortedRows();
+    // 只看未吸附: 与 * 标记同口径 (有单价且未匹配预设官方价), 仅作用于明细表
+    const rows = onlyUnsnapped
+      ? rowsAll.filter(r => r.unit_price && !snapUnitPrice(r).snapped)
+      : rowsAll;
     const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
     page = Math.max(1, Math.min(page, totalPages));
-    document.getElementById('table-count').textContent = `共 ${rows.length} 条`;
+    document.getElementById('table-count').textContent =
+      onlyUnsnapped ? `未吸附 ${rows.length} / 共 ${rowsAll.length} 条` : `共 ${rows.length} 条`;
     document.getElementById('page-info').textContent = `${page} / ${totalPages}`;
     document.getElementById('btn-prev').disabled = page <= 1;
     document.getElementById('btn-next').disabled = page >= totalPages;
@@ -746,6 +758,13 @@
     });
   });
 
+  // 明细表: 只看未吸附 (切换后重置到第一页)
+  document.getElementById('f-unsnapped').addEventListener('change', e => {
+    onlyUnsnapped = e.target.checked;
+    page = 1;
+    renderTable();
+  });
+
   // 快速区间预设: 以数据中最晚日期为基准向前推; 默认 近1月
   function fmtDate(d) {
     const p = n => String(n).padStart(2, '0');
@@ -766,6 +785,13 @@
   }
 
   function applyPreset(range) {
+    if (range === 'all') {  // 全部: 清空日期区间
+      document.getElementById('f-start').value = '';
+      document.getElementById('f-end').value = '';
+      markPreset(range);
+      applyFilters();
+      return;
+    }
     const maxDate = maxBillDate();
     if (!maxDate) { markPreset(range); return; }
     const d = new Date(maxDate + 'T00:00:00');

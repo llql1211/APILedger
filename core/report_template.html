@@ -123,7 +123,7 @@
       <div id="chart-platform" class="chart"></div>
     </div>
     <div class="chart-box">
-      <h3>模型费用对比 (Top-15)</h3>
+      <h3>模型 Token / 费用对比 <span class="hint">(全部模型 · 按 Token 降序)</span></h3>
       <div id="chart-model" class="chart"></div>
     </div>
     <div class="chart-box">
@@ -133,14 +133,6 @@
         <button data-m="cost">费用</button>
       </div>
       <div id="chart-stack" class="chart"></div>
-    </div>
-    <div class="chart-box">
-      <h3><span id="t-modelpie">各模型 Token 分布</span></h3>
-      <div class="chart-tabs" id="tabs-modelpie">
-        <button data-m="tokens" class="active">Tokens</button>
-        <button data-m="cost">费用</button>
-      </div>
-      <div id="chart-modelpie" class="chart"></div>
     </div>
   </div>
 
@@ -197,7 +189,7 @@
 
   // 图表实例与指标状态
   const charts = {};
-  const pieMetric = { platform: 'cost', modelpie: 'tokens', stack: 'tokens' };
+  const pieMetric = { platform: 'cost', stack: 'tokens' };
   let trendGran = '日';
 
   // 类型归并: 预设价格推断可能产生 "输入(缓存命中)" 等类型名, 统一归入三桶
@@ -504,34 +496,62 @@
     renderPie('chart-platform', groupSum(filtered, 'platform', pieMetric.platform), pieMetric.platform);
   }
 
-  // ── 平台内各模型 Token 分布 (跟随平台筛选) ──
-  function renderModelPie() {
-    const pf = document.getElementById('f-platform').value;
-    document.getElementById('t-modelpie').textContent =
-      pf ? `平台「${pf}」内各模型 ${pieMetric.modelpie === 'cost' ? '费用' : 'Token'} 分布`
-         : `各模型 ${pieMetric.modelpie === 'cost' ? '费用' : 'Token'} 分布 (全部平台)`;
-    renderPie('chart-modelpie', groupSum(filtered, 'model', pieMetric.modelpie), pieMetric.modelpie);
-  }
-
-  // ── 模型费用柱状图 Top-15 ──
+  // ── 模型 Token / 费用对比: 全部模型, 每模型两根横向条 (上 Token 下费用, 双轴各自缩放) ──
   function renderModelBar() {
     const el = document.getElementById('chart-model');
     if (!filtered.length) { showEmpty(el, '当前筛选无数据'); return; }
     const chart = getChart('model', el);
     if (!chart) return;
-    const groups = groupSum(filtered, 'model', 'cost').slice(0, 15);
-    const names = [...groups].reverse().map(d => d.name);
-    const vals = [...groups].reverse().map(d => d.value);
+    // 每模型聚合 tokens + cost, 按 Token 总量降序
+    const map = new Map();
+    for (const r of filtered) {
+      const k = r.model || '(空)';
+      const g = map.get(k) || { tokens: 0, cost: 0 };
+      g.tokens += Number(r.tokens || 0);
+      g.cost += Number(r.cost || 0);
+      map.set(k, g);
+    }
+    const groups = [...map.entries()]
+      .map(([name, v]) => ({ name, ...v }))
+      .sort((a, b) => b.tokens - a.tokens);
+    const totalTokens = groups.reduce((s, g) => s + g.tokens, 0);
+    const totalCost = groups.reduce((s, g) => s + g.cost, 0);
+    // 类目轴 index 0 在最下方 → 反转使 Token 最多的模型在最上
+    const rows = [...groups].reverse();
     chart.setOption({
-      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: p => p[0].name + '<br>' + fmtCost(p[0].value) },
-      grid: { left: 130, right: 60, top: 20, bottom: 30 },
-      xAxis: { type: 'value', name: '费用(¥)', axisLabel: { fontSize: 10 } },
-      yAxis: { type: 'category', data: names, axisLabel: { fontSize: 10 } },
-      series: [{
-        type: 'bar', data: vals,
-        itemStyle: { color: '#2fa572', borderRadius: [0, 4, 4, 0] },
-        label: { show: true, position: 'right', formatter: p => fmtCost(p.value), fontSize: 10 },
-      }],
+      legend: { bottom: 0 },
+      tooltip: {
+        trigger: 'item', axisPointer: { type: 'shadow' },
+        formatter: p => {
+          const g = rows[p.dataIndex];
+          if (!g) return '';
+          const tp = totalTokens ? (g.tokens / totalTokens * 100).toFixed(2) : '0.00';
+          const cp = totalCost ? (g.cost / totalCost * 100).toFixed(2) : '0.00';
+          return '<b>' + g.name + '</b><br>'
+               + 'Tokens: ' + fmtTokensM(g.tokens) + ' (' + tp + '%)<br>'
+               + '费用: ' + fmtCost2(g.cost) + ' (' + cp + '%)';
+        },
+      },
+      grid: { left: 130, right: 110, top: 20, bottom: 40 },
+      xAxis: [
+        { type: 'value', axisLabel: { fontSize: 10 } },
+        { type: 'value', axisLabel: { show: false }, splitLine: { show: false } },
+      ],
+      yAxis: { type: 'category', data: rows.map(g => g.name), axisLabel: { fontSize: 10 } },
+      series: [
+        {
+          name: 'Tokens', type: 'bar', data: rows.map(g => g.tokens),
+          itemStyle: { color: '#2fa572', borderRadius: [0, 4, 4, 0] },
+          barMaxWidth: 12,
+          label: { show: true, position: 'right', formatter: p => fmtTokensM(p.value), fontSize: 10 },
+        },
+        {
+          name: '费用', type: 'bar', xAxisIndex: 1, data: rows.map(g => g.cost),
+          itemStyle: { color: '#1f538d', borderRadius: [0, 4, 4, 0] },
+          barMaxWidth: 12,
+          label: { show: true, position: 'right', formatter: p => fmtCost2(p.value), fontSize: 10 },
+        },
+      ],
     }, true);
   }
 
@@ -613,7 +633,6 @@
     renderPlatform();
     renderModelBar();
     renderStack();
-    renderModelPie();
   }
 
   // ═══════════════════════════════════════════
@@ -759,7 +778,6 @@
 
   // 饼图/堆叠图指标切换
   [['tabs-platform', 'platform', renderPlatform],
-   ['tabs-modelpie', 'modelpie', renderModelPie],
    ['tabs-stack', 'stack', renderStack]].forEach(([tabsId, key, render]) => {
     document.querySelectorAll('#' + tabsId + ' button').forEach(btn => {
       btn.addEventListener('click', () => {

@@ -53,13 +53,12 @@ class TestBuildHtml:
         assert by_model["DeepSeek-V3"]["cost"] == pytest.approx(1.41060000001)
 
     def test_cost_formatting_capped_at_4_decimals(self, seeded_db):
-        """所有金额展示均使用 fmtCost (最多 4 位小数), 不出现原始 {c} 占位"""
+        """金额展示使用 fmtCost (4 位小数) / fmtCost2 (2 位小数), 不出现原始 {c} 占位"""
         html = build_html(seeded_db)
         assert "maximumFractionDigits: 4" in html
         # ECharts 的 {c} 原始值输出已全部替换为 fmtCost
         assert "'{b}: ¥{c} ({d}%)'" not in html
-        assert html.count("fmtCost(p.value)") >= 2
-        assert "fmtCost(p[0].value)" in html
+        assert html.count("fmtCost(p.value)") >= 1
 
     def test_filter_fields_present(self, seeded_db):
         """筛选栏包含平台 / 项目 / 模型 / 类型下拉"""
@@ -68,13 +67,13 @@ class TestBuildHtml:
             assert f'id="{fid}"' in html
 
     def test_chart_containers_present(self, seeded_db):
-        """全部图表容器齐全 (趋势/平台/模型柱状/构成堆叠/模型分布)"""
+        """全部图表容器齐全 (趋势/平台/模型双条/构成堆叠)"""
         html = build_html(seeded_db)
-        for cid in ("chart-trend", "chart-platform", "chart-model",
-                    "chart-stack", "chart-modelpie"):
+        for cid in ("chart-trend", "chart-platform", "chart-model", "chart-stack"):
             assert f'id="{cid}"' in html
-        # 类型分布饼图已删除
+        # 类型分布饼图、模型分布饼图已删除 (并入模型 Token/费用对比图)
         assert 'chart-typepie' not in html
+        assert 'chart-modelpie' not in html
 
 
 class TestExportReport:

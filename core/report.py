@@ -47,7 +47,8 @@ def _collect_official_prices() -> Dict[str, Dict[str, Any]]:
     同一模型不同时段价格不同, 由 history 表达 (until 含当日, 语义与
     _apply_price_hint 的 type 反推一致)。旧格式 {platform: {model: ...}} 自动摊平。
 
-    供前端展示层"单价吸附": 计算单价与该日期生效的官方价相对误差 ≤2% 时按官方价显示。
+    供前端展示层"单价吸附"与终端未吸附提示: 计算单价与该日期生效的官方价
+    相对误差 ≤SNAP_TOLERANCE 时按官方价显示。
     """
     from core.presets import load_all_presets, get_pricing_dict
 
@@ -132,6 +133,84 @@ def _build_report_data(db: Database) -> Dict[str, Any]:
         })
 
     return {"summary": summary, "records": raw_records, "pricing": _collect_official_prices()}
+
+
+# ═══════════════════════════════════════════════════
+# 未吸附单价检测 (与前端 snapUnitPrice 同一套判定)
+# ═══════════════════════════════════════════════════
+
+# 单价吸附容差: 计算单价与官方价相对误差 ≤5% 视为同一价格 (前端保持一致)
+SNAP_TOLERANCE = 0.05
+
+
+def _price_at(cfg: Dict[str, Any], date_str: str) -> Dict[str, float]:
+    """解析某账单日期生效的官方价, until 含当日 (语义与前端 officialPrice 一致)"""
+    best = None
+    for h in cfg.get("history") or []:
+        until = str(h.get("until", ""))
+        if date_str and date_str <= until and (best is None or until < str(best.get("until", ""))):
+            best = h
+    cur = best or cfg
+    out: Dict[str, float] = {}
+    for k in ("input_hit", "input_miss", "output"):
+        try:
+            v = float(cur.get(k) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        if v > 0:
+            out[k] = v
+    return out
+
+
+def unsnapped_price_groups(db: Database) -> list:
+    """
+    找出未吸附到预设官方价的账单, 按 (模型, 类型, 原因) 分组计数。
+
+    判定与前端 snapUnitPrice 一致: 模型 × 账单日期 × 类型 (缓存输入→input_hit,
+    输出→output, 其余→input_miss), 相对误差 ≤SNAP_TOLERANCE 视为吸附。
+    零单价行不展示单价, 不参与提示; 全库未配置任何官方价表时返回空 (无从比对)。
+
+    返回 [{"model", "type", "reason", "count", "price_range"}, ...]
+    """
+    prices = _collect_official_prices()
+    if not prices:
+        return []
+
+    groups: Dict[tuple, Dict[str, Any]] = {}
+    for r in db.get_all(order_by="date ASC"):
+        v = float(r.get("unit_price", 0.0) or 0.0)
+        if not v:
+            continue
+        model = r.get("model", "")
+        rtype = r.get("type", "")
+        cfg = prices.get(model)
+        if not cfg:
+            reason = "未配置官方价表"
+        else:
+            p = _price_at(cfg, str(r.get("date", "") or "")[:10])
+            if not p:
+                reason = "该日期无生效官方价"
+            else:
+                key = "input_hit" if "缓存" in rtype else ("output" if "输出" in rtype else "input_miss")
+                official = p.get(key)
+                if official is None:
+                    reason = "价表缺少该类型单价"
+                elif abs(v - official) <= official * SNAP_TOLERANCE:
+                    continue
+                else:
+                    reason = f"偏差超 5% (官方价 ¥{official}/M)"
+        g = groups.setdefault((model, rtype, reason),
+                              {"model": model, "type": rtype, "reason": reason,
+                               "count": 0, "prices": set()})
+        g["count"] += 1
+        g["prices"].add(round(v, 4))
+
+    out = []
+    for g in groups.values():
+        ps = sorted(g.pop("prices"))
+        g["price_range"] = f"¥{ps[0]:g}~¥{ps[-1]:g}" if len(ps) > 1 else f"¥{ps[0]:g}"
+        out.append(g)
+    return out
 
 
 # ═══════════════════════════════════════════════════

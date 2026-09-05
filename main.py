@@ -33,7 +33,7 @@ from core.importer import (
     NoPresetError,
     INPUT_DIR,
 )
-from core.report import export_report
+from core.report import export_report, unsnapped_price_groups
 
 
 # ═══════════════════════════════════════════════════
@@ -208,6 +208,18 @@ def run_import(db: Database, mode: str = "ask", dry_run: bool = False) -> dict:
 # 入口
 # ═══════════════════════════════════════════════════
 
+def print_unsnapped_hint(db: Database):
+    """报告生成后, 提示未吸附到预设官方价的账单 (明细表内以 * 标注)"""
+    groups = unsnapped_price_groups(db)
+    if not groups:
+        return
+    total = sum(g["count"] for g in groups)
+    print(f"\n提示: {total} 条账单单价未吸附预设官方价 (报告明细表以 * 标注):")
+    for g in groups:
+        print(f"  - {g['model']} / {g['type']}: {g['count']} 条, "
+              f"{g['reason']}, 计算单价 {g['price_range']}")
+
+
 def open_in_browser(path: str):
     """用系统默认浏览器打开报告文件"""
     url = "file:///" + path.replace(os.sep, "/")
@@ -241,6 +253,7 @@ def main():
         if not args.dry_run and not args.no_report:
             path = export_report(db)
             print(f"\n报告已生成: {path}")
+            print_unsnapped_hint(db)
             if not args.no_open:
                 open_in_browser(path)
     finally:

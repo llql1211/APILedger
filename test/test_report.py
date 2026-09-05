@@ -2,11 +2,12 @@
 
 import json
 import os
+from unittest import mock
 
 import pytest
 
 from core.db import Database
-from core.report import TEMPLATE_PATH, build_html, export_report
+from core.report import TEMPLATE_PATH, build_html, export_report, unsnapped_price_groups
 
 
 @pytest.fixture
@@ -130,6 +131,85 @@ class TestOfficialPrices:
         monkeypatch.setattr(report, "_collect_official_prices", lambda: {})
         data = json.loads(_extract_data(build_html(seeded_db)))
         assert data["pricing"] == {}
+
+
+class _FakeDb:
+    """只提供 get_all 的假数据库, 用于单测 unsnapped_price_groups 的分组逻辑"""
+    def __init__(self, rows):
+        self._rows = rows
+    def get_all(self, order_by=None):
+        return self._rows
+
+
+class TestUnsnappedPrices:
+    """终端未吸附提示: unsnapped_price_groups 与前端 snapUnitPrice 同判定"""
+
+    def _patch(self, monkeypatch, pricing):
+        monkeypatch.setattr("core.report._collect_official_prices", lambda: pricing)
+
+    def test_zero_price_rows_ignored(self, monkeypatch):
+        # 零单价行不展示单价, 不参与提示
+        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0}})
+        rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 0.0}]
+        assert unsnapped_price_groups(_FakeDb(rows)) == []
+
+    def test_no_pricing_returns_empty(self, monkeypatch):
+        # 全库未配置任何官方价表 → 无从比对, 不提示
+        self._patch(monkeypatch, {})
+        rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 3.0}]
+        assert unsnapped_price_groups(_FakeDb(rows)) == []
+
+    def test_within_tolerance_snapped(self, monkeypatch):
+        # 3.06 vs 官方价 3.0 → 偏差 2% ≤5% → 吸附, 无提示
+        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0, "output": 9.0}})
+        rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 3.06}]
+        assert unsnapped_price_groups(_FakeDb(rows)) == []
+
+    def test_deviation_beyond_tolerance(self, monkeypatch):
+        # 3.2 vs 3.0 → 偏差 6.7% >5% → 未吸附, 按模型/类型/原因分组
+        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0, "output": 9.0}})
+        rows = [{"date": "2026-08-03", "model": "GLM-5", "type": "输入", "unit_price": 3.2},
+                {"date": "2026-08-04", "model": "GLM-5", "type": "输入", "unit_price": 3.25}]
+        groups = unsnapped_price_groups(_FakeDb(rows))
+        assert len(groups) == 1
+        g = groups[0]
+        assert (g["model"], g["type"]) == ("GLM-5", "输入")
+        assert g["count"] == 2
+        assert "偏差超 5%" in g["reason"] and "¥3.0/M" in g["reason"]
+        assert g["price_range"] == "¥3.2~¥3.25"
+
+    def test_type_key_mapping(self, monkeypatch):
+        # 缓存输入→input_hit, 输出→output, 其余→input_miss
+        self._patch(monkeypatch, {"M": {"input_hit": 1.0, "input_miss": 3.0, "output": 9.0}})
+        rows = [{"date": "2026-08-03", "model": "M", "type": "缓存输入", "unit_price": 1.02},
+                {"date": "2026-08-03", "model": "M", "type": "输出", "unit_price": 10.0},
+                {"date": "2026-08-03", "model": "M", "type": "输入", "unit_price": 3.5}]
+        groups = unsnapped_price_groups(_FakeDb(rows))
+        # 1.02 vs 1.0 吸附 (2%); 10.0 vs 9.0 偏差 11.1% 未吸附; 3.5 vs 3.0 偏差 16.7% 未吸附
+        by_type = {g["type"]: g for g in groups}
+        assert "缓存输入" not in by_type
+        assert by_type["输出"]["reason"].startswith("偏差超 5%")
+        assert by_type["输入"]["reason"].startswith("偏差超 5%")
+
+    def test_missing_model_and_type_price(self, monkeypatch):
+        self._patch(monkeypatch, {"GLM-5": {"input_miss": 3.0}})
+        rows = [{"date": "2026-08-03", "model": "Unknown", "type": "输出", "unit_price": 5.0},
+                {"date": "2026-08-05", "model": "GLM-5", "type": "输出", "unit_price": 9.0}]
+        groups = unsnapped_price_groups(_FakeDb(rows))
+        reasons = {(g["model"], g["type"]): g["reason"] for g in groups}
+        assert reasons[("Unknown", "输出")] == "未配置官方价表"
+        assert reasons[("GLM-5", "输出")] == "价表缺少该类型单价"
+
+    def test_history_date_aware(self, monkeypatch):
+        # 8 月按旧价 3.0 吸附, 9 月按新价 3.5 吸附 (9 月账单若误用旧价会偏差超差)
+        pricing = {"GLM-5": {"history": [
+            {"until": "2026-08-31", "input_miss": 3.0},
+            {"until": "2099-12-31", "input_miss": 3.5},
+        ]}}
+        self._patch(monkeypatch, pricing)
+        rows = [{"date": "2026-08-20", "model": "GLM-5", "type": "输入", "unit_price": 3.06},
+                {"date": "2026-09-01", "model": "GLM-5", "type": "输入", "unit_price": 3.58}]
+        assert unsnapped_price_groups(_FakeDb(rows)) == []
 
 
 def _extract_data(html: str) -> str:

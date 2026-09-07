@@ -6,6 +6,8 @@ platforms = ["win-64"]
 version = "0.1.0"
 
 [tasks]
+# 归档文件移回 input 并删除旧库, 然后重建 (替代 rebuild_db.bat)
+rebuild = "python -c \"import pathlib,shutil,sys;a=pathlib.Path('data/archive');i=pathlib.Path('data/input');a.is_dir() or sys.exit('[ERROR] Archive directory not found: data/archive');i.mkdir(parents=True,exist_ok=True);moved=[shutil.move(str(p),str(i)) for p in sorted(a.glob('*'))];pathlib.Path('data/api_ledger.db').unlink(missing_ok=True);print(f'[rebuild] Moved {len(moved)} file(s) from data/archive to data/input; deleted old database')\" && python main.py"
 
 [dependencies]
 python = ">=3.10"

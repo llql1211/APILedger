@@ -134,6 +134,15 @@
       <span style="display:flex;align-items:center;gap:10px;">
         <span id="table-count">共 0 条</span>
         <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer;">
+          每页显示条数
+          <select id="f-page-size" style="padding:2px 6px;border:1px solid var(--border);border-radius:5px;font-size:12px;color:var(--muted);background:#fff;cursor:pointer;">
+            <option value="30" selected>30</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="all">全部</option>
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer;">
           <input type="checkbox" id="f-unsnapped"> 只看未吸附
         </label>
       </span>
@@ -177,7 +186,7 @@
   let sortKey = null;           // null = 默认复合排序 (平台→项目→日期)
   let sortDir = -1;
   let onlyUnsnapped = false;    // 明细表"只看未吸附"
-  const PAGE_SIZE = 30;
+  let pageSize = 30;            // 明细表每页条数 (Infinity = 全部)
 
   // 图表实例与指标状态
   const charts = {};
@@ -700,7 +709,7 @@
     const rows = onlyUnsnapped
       ? rowsAll.filter(r => r.unit_price && !snapUnitPrice(r).snapped)
       : rowsAll;
-    const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(rows.length / pageSize));
     page = Math.max(1, Math.min(page, totalPages));
     document.getElementById('table-count').textContent =
       onlyUnsnapped ? `未吸附 ${rows.length} / 共 ${rowsAll.length} 条` : `共 ${rows.length} 条`;
@@ -708,8 +717,8 @@
     document.getElementById('btn-prev').disabled = page <= 1;
     document.getElementById('btn-next').disabled = page >= totalPages;
 
-    const start = (page - 1) * PAGE_SIZE;
-    const slice = rows.slice(start, start + PAGE_SIZE);
+    const start = pageSize === Infinity ? 0 : (page - 1) * pageSize;
+    const slice = rows.slice(start, pageSize === Infinity ? undefined : start + pageSize);
     const tbody = document.getElementById('table-body');
     tbody.innerHTML = '';
     if (!slice.length) {
@@ -778,6 +787,13 @@
   // 明细表: 只看未吸附 (切换后重置到第一页)
   document.getElementById('f-unsnapped').addEventListener('change', e => {
     onlyUnsnapped = e.target.checked;
+    page = 1;
+    renderTable();
+  });
+
+  // 明细表: 每页条数 ("全部" = 不分页)
+  document.getElementById('f-page-size').addEventListener('change', e => {
+    pageSize = e.target.value === 'all' ? Infinity : Number(e.target.value);
     page = 1;
     renderTable();
   });

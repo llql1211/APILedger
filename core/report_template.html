@@ -568,7 +568,7 @@
     const avgRateText = g => {
       if (!g.tokenTotal) return '';
       const rate = g.priceCost / g.tokenTotal;
-      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '/M';
+      return '¥' + rate.toLocaleString('zh-CN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + '/M';
     };
     // 行内最顶端的非零段右侧显示均价标签 (只在该段处标注一次)
     const labelFor = (bucketIdx) => ({
